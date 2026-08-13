@@ -1,0 +1,21 @@
+{
+  "project": "Мой TTS эксперимент",
+  "tasks": [
+    {
+      "id": "sbs-001",
+      "type": "pairwise",
+      "text": "Текст, который озвучивают обе модели.",
+      "question": "Какой вариант звучит естественнее?",
+      "hint": "Оценивайте интонацию, произношение и артефакты.",
+      "audioA": { "src": "https://example.com/audio/model-a.wav", "label": "Model A" },
+      "audioB": { "src": "https://example.com/audio/model-b.wav", "label": "Model B" }
+    },
+    {
+      "id": "question-001",
+      "type": "boolean",
+      "text": "Ты уже отправил финальную версию?",
+      "question": "Есть ли здесь вопросительная интонация?",
+      "audio": { "src": "https://example.com/audio/question.wav", "label": "Model A" }
+    }
+  ]
+}
