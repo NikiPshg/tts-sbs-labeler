@@ -1,6 +1,18 @@
-import type { LabelingTask } from './types'
+import type { Annotation, AppUser, LabelingTask } from './types'
 
 export const demoProject = 'Демо · русский голос'
+export const demoDefaultOverlap = 3
+
+export const demoUsers: AppUser[] = [
+  { id: 'admin', name: 'Никита', email: 'admin@sbs.local', role: 'admin', status: 'active', color: '#26272c' },
+  { id: 'anna', name: 'Анна Соколова', email: 'anna@sbs.local', role: 'annotator', status: 'active', color: '#6558dc' },
+  { id: 'max', name: 'Максим Орлов', email: 'max@sbs.local', role: 'annotator', status: 'active', color: '#2f9a6b' },
+  { id: 'sofia', name: 'София Волкова', email: 'sofia@sbs.local', role: 'annotator', status: 'active', color: '#e7795d' },
+  { id: 'denis', name: 'Денис Ким', email: 'denis@sbs.local', role: 'annotator', status: 'active', color: '#4388c9' },
+  { id: 'maria', name: 'Мария Белова', email: 'maria@sbs.local', role: 'annotator', status: 'active', color: '#b45bad' },
+  { id: 'alex', name: 'Алексей Миронов', email: 'alex@sbs.local', role: 'annotator', status: 'active', color: '#d09737' },
+  { id: 'olga', name: 'Ольга Лебедева', email: 'olga@sbs.local', role: 'annotator', status: 'active', color: '#6c7a89' },
+]
 
 export const demoTasks: LabelingTask[] = [
   {
@@ -9,6 +21,9 @@ export const demoTasks: LabelingTask[] = [
     text: 'Через несколько минут поезд отправится с третьей платформы.',
     question: 'Какой вариант звучит естественнее?',
     hint: 'Оценивайте интонацию, произношение и отсутствие артефактов.',
+    requiredAnnotations: 3,
+    assigneeIds: ['anna', 'max', 'sofia'],
+    createdAt: '2026-08-10T10:00:00.000Z',
     audioA: { src: './audio/sample-a.wav', label: 'Модель A' },
     audioB: { src: './audio/sample-b.wav', label: 'Модель B' },
   },
@@ -18,6 +33,9 @@ export const demoTasks: LabelingTask[] = [
     text: 'Ты уже отправил финальную версию?',
     question: 'Есть ли здесь вопросительная интонация?',
     hint: 'Оценивайте только интонацию, не содержание текста.',
+    requiredAnnotations: 3,
+    assigneeIds: ['anna', 'denis', 'maria'],
+    createdAt: '2026-08-10T10:05:00.000Z',
     audio: { src: './audio/sample-question.wav', label: 'Аудио' },
   },
   {
@@ -25,6 +43,9 @@ export const demoTasks: LabelingTask[] = [
     type: 'pairwise',
     text: 'Сегодня воздух особенно прозрачный, а город кажется совсем тихим.',
     question: 'Какой вариант вы бы оставили в датасете?',
+    requiredAnnotations: 3,
+    assigneeIds: ['anna', 'max', 'alex'],
+    createdAt: '2026-08-10T10:10:00.000Z',
     audioA: { src: './audio/sample-b.wav', label: 'Модель A' },
     audioB: { src: './audio/sample-a.wav', label: 'Модель B' },
   },
@@ -33,13 +54,69 @@ export const demoTasks: LabelingTask[] = [
     type: 'boolean',
     text: 'Какая неожиданная встреча!',
     question: 'Слышна ли эмоциональная окраска?',
+    requiredAnnotations: 3,
+    assigneeIds: ['sofia', 'denis', 'olga'],
+    createdAt: '2026-08-10T10:15:00.000Z',
     audio: { src: './audio/sample-b.wav', label: 'Аудио' },
   },
   {
     id: 'sbs-003',
     type: 'pairwise',
     text: 'Пожалуйста, проверьте адрес перед отправкой заказа.',
+    requiredAnnotations: 3,
+    assigneeIds: ['anna', 'maria', 'olga'],
+    createdAt: '2026-08-10T10:20:00.000Z',
     audioA: { src: './audio/sample-a.wav', label: 'Модель A' },
     audioB: { src: './audio/sample-question.wav', label: 'Модель B' },
   },
+  {
+    id: 'bool-003',
+    type: 'boolean',
+    text: 'Я обязательно вернусь до наступления темноты.',
+    question: 'Слышна ли уверенная интонация?',
+    requiredAnnotations: 3,
+    assigneeIds: ['max', 'sofia', 'alex'],
+    createdAt: '2026-08-10T10:25:00.000Z',
+    audio: { src: './audio/sample-a.wav', label: 'Аудио' },
+  },
+  {
+    id: 'sbs-004',
+    type: 'pairwise',
+    text: 'В следующем выпуске мы подробно обсудим результаты исследования.',
+    question: 'Какой вариант звучит профессиональнее?',
+    requiredAnnotations: 3,
+    assigneeIds: ['denis', 'maria', 'alex'],
+    createdAt: '2026-08-10T10:30:00.000Z',
+    audioA: { src: './audio/sample-b.wav', label: 'Модель A' },
+    audioB: { src: './audio/sample-question.wav', label: 'Модель B' },
+  },
+  {
+    id: 'bool-004',
+    type: 'boolean',
+    text: 'Закрой, пожалуйста, окно перед уходом.',
+    question: 'Звучит ли просьба вежливо?',
+    requiredAnnotations: 3,
+    assigneeIds: ['max', 'olga', 'sofia'],
+    createdAt: '2026-08-10T10:35:00.000Z',
+    audio: { src: './audio/sample-question.wav', label: 'Аудио' },
+  },
+]
+
+export const demoAnnotations: Annotation[] = [
+  { taskId: 'sbs-001', taskType: 'pairwise', userId: 'anna', value: 'a', answeredAt: '2026-08-11T08:12:00.000Z' },
+  { taskId: 'sbs-001', taskType: 'pairwise', userId: 'max', value: 'a', answeredAt: '2026-08-11T08:18:00.000Z' },
+  { taskId: 'sbs-001', taskType: 'pairwise', userId: 'sofia', value: 'b', answeredAt: '2026-08-11T09:03:00.000Z' },
+  { taskId: 'bool-001', taskType: 'boolean', userId: 'anna', value: 'yes', answeredAt: '2026-08-11T08:14:00.000Z' },
+  { taskId: 'bool-001', taskType: 'boolean', userId: 'denis', value: 'yes', answeredAt: '2026-08-11T09:22:00.000Z' },
+  { taskId: 'bool-001', taskType: 'boolean', userId: 'maria', value: 'yes', answeredAt: '2026-08-11T10:01:00.000Z' },
+  { taskId: 'sbs-002', taskType: 'pairwise', userId: 'max', value: 'b', answeredAt: '2026-08-11T08:25:00.000Z' },
+  { taskId: 'sbs-002', taskType: 'pairwise', userId: 'alex', value: 'b', answeredAt: '2026-08-11T10:15:00.000Z' },
+  { taskId: 'bool-002', taskType: 'boolean', userId: 'sofia', value: 'yes', answeredAt: '2026-08-11T09:07:00.000Z' },
+  { taskId: 'bool-002', taskType: 'boolean', userId: 'denis', value: 'no', answeredAt: '2026-08-11T09:25:00.000Z' },
+  { taskId: 'sbs-003', taskType: 'pairwise', userId: 'maria', value: 'a', answeredAt: '2026-08-11T10:05:00.000Z' },
+  { taskId: 'bool-003', taskType: 'boolean', userId: 'max', value: 'yes', answeredAt: '2026-08-11T08:29:00.000Z' },
+  { taskId: 'bool-003', taskType: 'boolean', userId: 'sofia', value: 'yes', answeredAt: '2026-08-11T09:11:00.000Z' },
+  { taskId: 'sbs-004', taskType: 'pairwise', userId: 'denis', value: 'a', answeredAt: '2026-08-11T09:30:00.000Z' },
+  { taskId: 'sbs-004', taskType: 'pairwise', userId: 'maria', value: 'a', answeredAt: '2026-08-11T10:08:00.000Z' },
+  { taskId: 'bool-004', taskType: 'boolean', userId: 'olga', value: 'yes', answeredAt: '2026-08-11T11:00:00.000Z' },
 ]

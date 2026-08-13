@@ -1,6 +1,17 @@
 export type PairwiseChoice = 'a' | 'b' | 'tie'
 export type BooleanChoice = 'yes' | 'no' | 'unsure'
 export type AnswerValue = PairwiseChoice | BooleanChoice
+export type UserRole = 'admin' | 'annotator'
+export type UserStatus = 'active' | 'paused'
+
+export interface AppUser {
+  id: string
+  name: string
+  email: string
+  role: UserRole
+  status: UserStatus
+  color: string
+}
 
 export interface AudioSource {
   src: string
@@ -11,6 +22,9 @@ interface BaseTask {
   id: string
   text: string
   hint?: string
+  requiredAnnotations?: number
+  assigneeIds?: string[]
+  createdAt?: string
 }
 
 export interface PairwiseTask extends BaseTask {
@@ -33,9 +47,17 @@ export interface TaskAnswer {
   taskType: LabelingTask['type']
   value: AnswerValue
   answeredAt: string
+  userId?: string
+}
+
+export interface Annotation extends TaskAnswer {
+  userId: string
 }
 
 export interface TaskBundle {
   project?: string
+  defaultOverlap?: number
   tasks: LabelingTask[]
 }
+
+export type AdminSection = 'overview' | 'tasks' | 'annotators' | 'settings'

@@ -1,5 +1,6 @@
 {
   "project": "Мой TTS эксперимент",
+  "defaultOverlap": 3,
   "tasks": [
     {
       "id": "sbs-001",
@@ -7,6 +8,7 @@
       "text": "Текст, который озвучивают обе модели.",
       "question": "Какой вариант звучит естественнее?",
       "hint": "Оценивайте интонацию, произношение и артефакты.",
+      "requiredAnnotations": 3,
       "audioA": { "src": "https://example.com/audio/model-a.wav", "label": "Model A" },
       "audioB": { "src": "https://example.com/audio/model-b.wav", "label": "Model B" }
     },
@@ -15,6 +17,7 @@
       "type": "boolean",
       "text": "Ты уже отправил финальную версию?",
       "question": "Есть ли здесь вопросительная интонация?",
+      "requiredAnnotations": 3,
       "audio": { "src": "https://example.com/audio/question.wav", "label": "Model A" }
     }
   ]
