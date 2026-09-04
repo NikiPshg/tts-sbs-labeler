@@ -21,6 +21,8 @@ export interface AudioSource {
 interface BaseTask {
   id: string
   text: string
+  /** The fragment being judged, when the question is about part of the phrase. */
+  focus?: string
   hint?: string
   requiredAnnotations?: number
   assigneeIds?: string[]

@@ -151,6 +151,15 @@ def cmd_import(args: argparse.Namespace) -> None:
     if media_dir:
         media_dir.mkdir(parents=True, exist_ok=True)
 
+    wanted: set[str] | None = None
+    if args.ids_file:
+        raw = json.loads(Path(args.ids_file).expanduser().read_text(encoding="utf-8"))
+        picked = raw[args.ids_key] if args.ids_key else raw
+        if not isinstance(picked, list):
+            sys.exit(f"В {args.ids_file} по ключу {args.ids_key} ожидался список id")
+        wanted = set(picked)
+        print(f"Фильтр по списку id: {len(wanted)}")
+
     if args.replace:
         with db.tx() as conn:
             conn.execute("DELETE FROM annotations")
@@ -164,7 +173,11 @@ def cmd_import(args: argparse.Namespace) -> None:
     imported = skipped_bucket = skipped_audio = 0
     rows: list[tuple[Any, ...]] = []
 
+    skipped_id = 0
     for record in read_jsonl(path):
+        if wanted is not None and record.get("id") not in wanted:
+            skipped_id += 1
+            continue
         if args.bucket:
             bucket = dig(record, args.bucket_field)
             if bucket != args.bucket:
@@ -200,6 +213,9 @@ def cmd_import(args: argparse.Namespace) -> None:
             "hint": args.hint,
             "audio": {"src": f"/audio{served.as_posix()}", "label": "Аудио"},
         }
+        focus = dig(record, args.focus_field) if args.focus_field else None
+        if focus:
+            payload["focus"] = str(focus)
         meta = {
             "batch": args.batch,
             "source_id": raw_id,
@@ -236,8 +252,8 @@ def cmd_import(args: argparse.Namespace) -> None:
         )
     print(
         f"Импортировано {'контрольных ' if args.control else ''}заданий: {imported} "
-        f"(перекрытие {overlap}). "
-        f"Пропущено по bucket: {skipped_bucket}, без аудио: {skipped_audio}."
+        f"(перекрытие {overlap}). Пропущено: по списку id {skipped_id}, "
+        f"по bucket {skipped_bucket}, без аудио {skipped_audio}."
     )
     total = db.connect().execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"]
     print(f"Всего заданий в базе: {total}")
@@ -399,6 +415,63 @@ def write_control_order(ordered_ids: list[str], rows: list[Any]) -> None:
         )
 
 
+def spread_by_key(
+    pools: dict[str, list[str]], min_gap: int, rng: random.Random
+) -> list[tuple[str, str]]:
+    """Interleave items so the same key does not recur within min_gap slots.
+
+    Greedy with a cooldown window, always drawing from whichever key has most
+    items left — that is what keeps the tail from degenerating into one long run.
+    """
+    remaining = {key: list(ids) for key, ids in pools.items()}
+    order: list[tuple[str, str]] = []
+    cooldown: list[str] = []
+    while any(remaining.values()):
+        blocked = set(cooldown)
+        candidates = [k for k, ids in remaining.items() if ids and k not in blocked]
+        if not candidates:  # window wider than the set allows — take anything left
+            candidates = [k for k, ids in remaining.items() if ids]
+        top = max(len(remaining[k]) for k in candidates)
+        key = rng.choice([k for k in candidates if len(remaining[k]) == top])
+        order.append((remaining[key].pop(), key))
+        cooldown.append(key)
+        if len(cooldown) >= max(1, min_gap):
+            cooldown.pop(0)
+    return order
+
+
+def cmd_spread_batch(args: argparse.Namespace) -> None:
+    """Shuffle a batch so that neighbouring tasks do not share the same key."""
+    rows = db.connect().execute(
+        "SELECT id, meta, ord FROM tasks WHERE meta LIKE ? ORDER BY ord, id",
+        (f'%"batch": "{args.batch}"%',),
+    ).fetchall()
+    if not rows:
+        sys.exit(f"Партия {args.batch} не найдена")
+
+    pools: dict[str, list[str]] = {}
+    for r in rows:
+        key = str(dig(json.loads(r["meta"] or "{}"), args.key) or "—")
+        pools.setdefault(key, []).append(r["id"])
+
+    rng = random.Random(args.seed)
+    for ids in pools.values():
+        rng.shuffle(ids)
+    order = spread_by_key(pools, args.min_gap, rng)
+
+    slots = sorted(r["ord"] for r in rows)
+    with db.tx() as conn:
+        conn.executemany(
+            "UPDATE tasks SET ord = ? WHERE id = ?",
+            [(slots[i], task_id) for i, (task_id, _) in enumerate(order)],
+        )
+
+    keys = [key for _, key in order]
+    adjacent = sum(1 for i in range(1, len(keys)) if keys[i] == keys[i - 1])
+    print(f"Партия {args.batch} перемешана: {len(order)} заданий, "
+          f"{len(pools)} значений «{args.key}», соседей с одинаковым значением: {adjacent}")
+
+
 def cmd_cluster_controls(args: argparse.Namespace) -> None:
     """Put every take of one phrase together, variants shuffled inside.
 
@@ -442,22 +515,7 @@ def cmd_arrange_controls(args: argparse.Namespace) -> None:
     for ids in pools.values():
         rng.shuffle(ids)
 
-    # Greedy placement with a cooldown: never reuse a text that appeared within
-    # the last min_gap slots, preferring whichever text has most takes left.
-    remaining = {text: list(ids) for text, ids in pools.items()}
-    order: list[tuple[str, str]] = []
-    cooldown: list[str] = []
-    while any(remaining.values()):
-        blocked = set(cooldown)
-        candidates = [t for t, ids in remaining.items() if ids and t not in blocked]
-        if not candidates:  # gap too wide for this set — fall back to any text left
-            candidates = [t for t, ids in remaining.items() if ids]
-        top = max(len(remaining[t]) for t in candidates)
-        text = rng.choice([t for t in candidates if len(remaining[t]) == top])
-        order.append((remaining[text].pop(), text))
-        cooldown.append(text)
-        if len(cooldown) >= max(1, args.min_gap):
-            cooldown.pop(0)
+    order = spread_by_key(pools, args.min_gap, rng)
 
     positions: dict[str, list[int]] = {}
     for i, (_, text) in enumerate(order):
@@ -658,6 +716,10 @@ def main() -> None:
     p.add_argument("--bucket-field", default="groups.bucket")
     p.add_argument("--audio-root", default=None)
     p.add_argument("--text-field", default="reference_text")
+    p.add_argument("--focus-field", default=None,
+                   help="что именно проверяем, напр. metrics.focus.reference")
+    p.add_argument("--ids-file", default=None, help="JSON со списком id для импорта")
+    p.add_argument("--ids-key", default=None, help="ключ внутри --ids-file")
     p.add_argument("--question", default=DEFAULT_QUESTION)
     p.add_argument("--hint", default=DEFAULT_HINT)
     p.add_argument("--overlap", type=int, default=None)
@@ -709,6 +771,14 @@ def main() -> None:
                    help="сколько других клипов минимум между дублями одной реплики")
     p.add_argument("--batch", default=None, help="только эта партия")
     p.set_defaults(func=cmd_arrange_controls)
+
+    p = sub.add_parser("spread-batch",
+                       help="перемешать партию, разводя задания с одинаковым признаком")
+    p.add_argument("batch")
+    p.add_argument("--key", default="groups.category", help="путь в meta, напр. groups.category")
+    p.add_argument("--min-gap", type=int, default=4)
+    p.add_argument("--seed", type=int, default=11)
+    p.set_defaults(func=cmd_spread_batch)
 
     p = sub.add_parser("cluster-controls",
                        help="сгруппировать контрольные по репликам (варианты подряд)")

@@ -59,6 +59,10 @@ def require_admin(request: Request) -> dict[str, Any]:
 # --------------------------------------------------------------------------- queue
 
 
+def _question_of(task: dict[str, Any]) -> str:
+    return json.loads(task["payload"]).get("question", "")
+
+
 def _rotation_offset(user_id: str, size: int) -> int:
     if size <= 0:
         return 0
@@ -98,15 +102,40 @@ def build_queue(user_id: str) -> list[dict[str, Any]]:
     offset = _rotation_offset(user_id, len(open_regular))
     rotated = open_regular[offset:] + open_regular[:offset]
 
+    # A honeypot only blends in among tasks asking the same question: dropped
+    # into a run of a different set it would stand out as an obvious plant.
+    by_question: dict[str, list[dict[str, Any]]] = {}
+    for control in controls:
+        by_question.setdefault(_question_of(control), []).append(control)
+
     every = int(db.get_setting("honeypot_every", "7") or 0)
+    # Space each question's honeypots evenly across that question's own run, so
+    # they all fit inside it instead of spilling past the end of the queue.
+    totals = Counter(_question_of(t) for t in rotated)
+    steps = {
+        question: max(1, min(every or 10**6, totals[question] // (len(pool) + 1)))
+        for question, pool in by_question.items()
+    }
+
+    seen: dict[str, int] = {}
     out: list[dict[str, Any]] = []
-    ci = 0
-    for i, task in enumerate(rotated):
+    for task in rotated:
         out.append(task)
-        if every and (i + 1) % every == 0 and ci < len(controls):
-            out.append(controls[ci])
-            ci += 1
-    out.extend(controls[ci:])
+        question = _question_of(task)
+        seen[question] = seen.get(question, 0) + 1
+        pool = by_question.get(question)
+        if every and pool and seen[question] % steps[question] == 0:
+            out.append(pool.pop(0))
+
+    # Anything left over (more controls than room) goes right after the last
+    # task sharing its question, never dangling at the very end of the queue.
+    for question, pool in by_question.items():
+        if not pool:
+            continue
+        last = max(
+            (i for i, t in enumerate(out) if _question_of(t) == question), default=len(out) - 1
+        )
+        out[last + 1 : last + 1] = pool
     return out
 
 

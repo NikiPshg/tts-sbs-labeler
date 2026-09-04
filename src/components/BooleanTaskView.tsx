@@ -28,7 +28,15 @@ export function BooleanTaskView({ task, answer, onAnswer }: BooleanTaskViewProps
         {task.hint && <p>{task.hint}</p>}
       </div>
 
-      <blockquote className="prompt-text">«{task.text}»</blockquote>
+      {task.focus ? (
+        <div className="focus-block">
+          <span className="focus-label">Проверяем, как произнесено</span>
+          <strong className="focus-value">{task.focus}</strong>
+          <p className="focus-context">В реплике: «{task.text}»</p>
+        </div>
+      ) : (
+        <blockquote className="prompt-text">«{task.text}»</blockquote>
+      )}
 
       <div className="single-audio">
         <div className="single-audio-label">Прослушайте запись</div>
