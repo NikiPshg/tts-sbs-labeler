@@ -1490,3 +1490,13 @@ kbd {
 .control-counters { display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; }
 .control-note { margin-top: 6px; color: #8a8d96; }
 .control-live { font-style: normal; font-weight: 500; color: #258359; }
+.control-filter { display: flex; align-items: center; gap: 7px; margin-top: 11px; font-size: 10px; color: #6f727c; cursor: pointer; }
+.control-filter input { width: 14px; height: 14px; accent-color: #6558dc; cursor: pointer; }
+.control-group { display: contents; }
+.control-group-header {
+  grid-column: 1 / -1; display: flex; align-items: flex-end; justify-content: space-between;
+  gap: 13px; margin: 12px 0 -4px;
+}
+.control-group-header h3 { font-size: 13px; font-weight: 660; color: #26272c; }
+.control-group-header p { margin-top: 3px; font-size: 10px; color: #7b7e88; }
+.control-group-done { grid-column: 1 / -1; padding: 13px 15px; border-radius: 12px; background: #f1f2f6; }

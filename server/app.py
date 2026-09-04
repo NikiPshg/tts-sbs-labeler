@@ -123,6 +123,7 @@ def admin_payload(task: dict[str, Any]) -> dict[str, Any]:
     payload["isControl"] = bool(task["is_control"])
     payload["controlAnswer"] = task["control_answer"]
     payload["controlActive"] = bool(task["control_active"])
+    payload["controlGroup"] = task["control_group"]
     # The raw id carries the batch name, which would tell the admin which
     # variant a calibration clip came from. Reference them by an opaque code.
     payload["code"] = hashlib.sha1(task["id"].encode()).hexdigest()[:6]

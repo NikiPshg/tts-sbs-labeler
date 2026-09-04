@@ -29,6 +29,7 @@ interface BaseTask {
   isControl?: boolean
   controlAnswer?: AnswerValue | null
   controlActive?: boolean
+  controlGroup?: string | null
   /** Opaque short code: the raw id would reveal which batch a clip came from. */
   code?: string
   meta?: Record<string, unknown>

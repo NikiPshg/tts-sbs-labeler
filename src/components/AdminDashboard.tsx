@@ -46,7 +46,7 @@ interface AdminDashboardProps {
 const sectionMeta: Record<AdminSection, { title: string; description: string }> = {
   overview: { title: 'Обзор проекта', description: 'Прогресс, качество и состояние разметки' },
   tasks: { title: 'Задания', description: 'Создавайте задания и управляйте перекрытием' },
-  control: { title: 'Контроль', description: 'Ханипоты: эталонные ответы и точность разметчиков' },
+  control: { title: 'Контроль', description: 'Наборы, которые размечаете вы: ханипоты и сравнение вариантов' },
   annotators: { title: 'Разметчики', description: 'Нагрузка, прогресс и согласие с остальными' },
   settings: { title: 'Настройки', description: 'Правила назначения и консенсуса проекта' },
 }

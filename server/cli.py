@@ -13,6 +13,7 @@ creating annotator links, flagging honeypots and exporting results.
 from __future__ import annotations
 
 import argparse
+import collections
 import hashlib
 import json
 import os
@@ -120,6 +121,22 @@ def resolve_audio(record: dict[str, Any], audio_root: Path | None) -> Path | Non
     return None
 
 
+PHRASE_TAIL = re.compile(r"-(\d+)$")
+
+
+def phrase_key_of(mode: str, raw_id: str, text: str) -> str:
+    """What counts as "the same phrase" when ordering control clips.
+
+    Usually the text itself, but a variant set may deliberately change the
+    wording (e.g. spelling out "ООО"), and those clips still belong together.
+    """
+    if mode == "id-tail":
+        match = PHRASE_TAIL.search(raw_id)
+        if match:
+            return match.group(1)
+    return text
+
+
 def opaque_name(batch: str, task_id: str) -> str:
     """Filename that hides which batch an audio came from (blind labeling)."""
     return hashlib.sha1(f"{batch}|{task_id}".encode()).hexdigest()[:16] + ".wav"
@@ -186,6 +203,8 @@ def cmd_import(args: argparse.Namespace) -> None:
         meta = {
             "batch": args.batch,
             "source_id": raw_id,
+            "variant": dig(record, "groups.category"),
+            "phrase_key": phrase_key_of(args.phrase_key, raw_id, text),
             "input_text": record.get("input_text"),
             "reference_text": record.get("reference_text"),
             "hypothesis": record.get("hypothesis"),
@@ -198,7 +217,8 @@ def cmd_import(args: argparse.Namespace) -> None:
         }
         rows.append(
             (task_id, start_ord + imported, json.dumps(payload, ensure_ascii=False), overlap,
-             1 if args.control else 0, json.dumps(meta, ensure_ascii=False), db.now())
+             1 if args.control else 0, args.control_group,
+             json.dumps(meta, ensure_ascii=False), db.now())
         )
         imported += 1
 
@@ -207,11 +227,11 @@ def cmd_import(args: argparse.Namespace) -> None:
 
     with db.tx() as c:
         c.executemany(
-            "INSERT INTO tasks(id, ord, payload, required, is_control, meta, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?) "
+            "INSERT INTO tasks(id, ord, payload, required, is_control, control_group, "
+            "meta, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, "
             "required = excluded.required, is_control = excluded.is_control, "
-            "meta = excluded.meta",
+            "control_group = excluded.control_group, meta = excluded.meta",
             rows,
         )
     print(
@@ -350,6 +370,62 @@ def cmd_unmark_controls(args: argparse.Namespace) -> None:
     print(f"Возвращено в обычную очередь: {cur.rowcount}")
 
 
+def control_rows(batch: str | None) -> list[Any]:
+    where = "is_control = 1"
+    params: tuple[Any, ...] = ()
+    if batch:
+        where += " AND meta LIKE ?"
+        params = (f'%"batch": "{batch}"%',)
+    rows = db.connect().execute(
+        f"SELECT id, payload, meta, ord FROM tasks WHERE {where} ORDER BY ord, id", params
+    ).fetchall()
+    if not rows:
+        sys.exit("Контрольных заданий нет" + (f" в партии {batch}" if batch else ""))
+    return rows
+
+
+def row_phrase_key(row: Any) -> str:
+    meta = json.loads(row["meta"] or "{}")
+    return meta.get("phrase_key") or json.loads(row["payload"]).get("text", row["id"])
+
+
+def write_control_order(ordered_ids: list[str], rows: list[Any]) -> None:
+    """Renumber within the slots the selected rows already occupy."""
+    slots = sorted(r["ord"] for r in rows)
+    with db.tx() as conn:
+        conn.executemany(
+            "UPDATE tasks SET ord = ? WHERE id = ?",
+            [(slots[i], task_id) for i, task_id in enumerate(ordered_ids)],
+        )
+
+
+def cmd_cluster_controls(args: argparse.Namespace) -> None:
+    """Put every take of one phrase together, variants shuffled inside.
+
+    The opposite of `arrange-controls`: for an A/B set of spellings the admin
+    must hear the same sentence back to back to compare pronunciation rather
+    than compare sentences.
+    """
+    rows = control_rows(args.batch)
+    groups: dict[str, list[str]] = {}
+    for r in rows:
+        groups.setdefault(row_phrase_key(r), []).append(r["id"])
+
+    rng = random.Random(args.seed)
+    keys = list(groups)
+    rng.shuffle(keys)
+    ordered: list[str] = []
+    for key in keys:
+        ids = groups[key]
+        rng.shuffle(ids)
+        ordered.extend(ids)
+
+    write_control_order(ordered, rows)
+    sizes = sorted({len(v) for v in groups.values()})
+    print(f"Контрольные сгруппированы по репликам: {len(groups)} реплик × "
+          f"{sizes[0] if len(sizes) == 1 else sizes} клипов = {len(ordered)}")
+
+
 def cmd_arrange_controls(args: argparse.Namespace) -> None:
     """Order the control tasks so two takes of one text are far apart.
 
@@ -357,17 +433,10 @@ def cmd_arrange_controls(args: argparse.Namespace) -> None:
     together the admin starts comparing the pair instead of judging each clip on
     its own, so spread each text's takes at least --min-gap slots apart.
     """
-    rows = db.connect().execute(
-        "SELECT id, payload FROM tasks WHERE is_control = 1 ORDER BY ord, id"
-    ).fetchall()
-    if not rows:
-        sys.exit("Контрольных заданий нет")
-
-    # Key on the phrase itself: the two takes come from different datasets, so
-    # their source ids differ and would not group them.
+    rows = control_rows(args.batch)
     pools: dict[str, list[str]] = {}
     for r in rows:
-        pools.setdefault(json.loads(r["payload"]).get("text", r["id"]), []).append(r["id"])
+        pools.setdefault(row_phrase_key(r), []).append(r["id"])
 
     rng = random.Random(args.seed)
     for ids in pools.values():
@@ -395,16 +464,9 @@ def cmd_arrange_controls(args: argparse.Namespace) -> None:
         positions.setdefault(text, []).append(i)
     gaps = [max(v) - min(v) for v in positions.values() if len(v) > 1]
 
-    base = db.connect().execute(
-        "SELECT COALESCE(MIN(ord), 0) AS m FROM tasks WHERE is_control = 1"
-    ).fetchone()["m"]
-    with db.tx() as conn:
-        conn.executemany(
-            "UPDATE tasks SET ord = ? WHERE id = ?",
-            [(base + i, task_id) for i, (task_id, _) in enumerate(order)],
-        )
+    write_control_order([task_id for task_id, _ in order], rows)
     print(f"Порядок контрольных перемешан: {len(order)} заданий, "
-          f"минимальный разрыв между дублями одного текста: {min(gaps) if gaps else '—'} "
+          f"минимальный разрыв между дублями одной реплики: {min(gaps) if gaps else '—'} "
           f"(медиана {sorted(gaps)[len(gaps) // 2] if gaps else '—'})")
 
 
@@ -414,9 +476,13 @@ def cmd_promote_honeypots(args: argparse.Namespace) -> None:
     Only clips the admin answered "да" or "нет" qualify: "не разобрать" means the
     clip is ambiguous, which is exactly what a control must not be.
     """
+    where = "is_control = 1 AND control_answer IS NOT NULL"
+    params: tuple[Any, ...] = ()
+    if args.batch:
+        where += " AND meta LIKE ?"
+        params = (f'%"batch": "{args.batch}"%',)
     rows = db.connect().execute(
-        "SELECT id, control_answer, meta FROM tasks "
-        "WHERE is_control = 1 AND control_answer IS NOT NULL ORDER BY ord, id"
+        f"SELECT id, control_answer, meta FROM tasks WHERE {where} ORDER BY ord, id", params
     ).fetchall()
     if not rows:
         sys.exit("Нет размеченных контрольных — сначала проставьте эталоны в разделе «Контроль»")
@@ -501,7 +567,7 @@ def cmd_batches(_: argparse.Namespace) -> None:
 
 def cmd_controls(_: argparse.Namespace) -> None:
     rows = db.connect().execute(
-        "SELECT id, control_answer, control_active, payload FROM tasks "
+        "SELECT id, control_answer, control_active, control_group, payload FROM tasks "
         "WHERE is_control = 1 ORDER BY ord, id"
     ).fetchall()
     if not rows:
@@ -510,10 +576,11 @@ def cmd_controls(_: argparse.Namespace) -> None:
     labeled = sum(1 for r in rows if r["control_answer"])
     active = sum(1 for r in rows if r["control_active"])
     print(f"Контрольных: {len(rows)}, с эталоном: {labeled}, в очереди разметчиков: {active}")
-    for r in rows:
-        text = json.loads(r["payload"]).get("text", "")[:52]
-        flag = "→очередь" if r["control_active"] else ""
-        print(f"  {r['id']:<44} {r['control_answer'] or '—':<7} {flag:<9} {text}")
+    groups = collections.Counter(r["control_group"] or "(без группы)" for r in rows)
+    for name, n in groups.items():
+        done = sum(1 for r in rows
+                   if (r["control_group"] or "(без группы)") == name and r["control_answer"])
+        print(f"  · {name}: {n} клипов, с эталоном {done}")
 
 
 # --------------------------------------------------------------------------- output
@@ -600,6 +667,10 @@ def main() -> None:
                    help="куда скопировать wav под обезличенным именем ('' — не копировать)")
     p.add_argument("--control", action="store_true",
                    help="завести как контрольные: разметчики их не увидят")
+    p.add_argument("--control-group", default=None,
+                   help="заголовок группы в разделе «Контроль» (виден админу)")
+    p.add_argument("--phrase-key", choices=["text", "id-tail"], default="text",
+                   help="что считать одной репликой при сортировке контрольных")
     p.add_argument("--replace", action="store_true", help="удалить прежние задания и ответы")
     p.set_defaults(func=cmd_import)
 
@@ -635,12 +706,20 @@ def main() -> None:
                        help="перемешать контрольные, чтобы одинаковые тексты не шли подряд")
     p.add_argument("--seed", type=int, default=11)
     p.add_argument("--min-gap", type=int, default=6,
-                   help="сколько других клипов минимум между дублями одного текста")
+                   help="сколько других клипов минимум между дублями одной реплики")
+    p.add_argument("--batch", default=None, help="только эта партия")
     p.set_defaults(func=cmd_arrange_controls)
+
+    p = sub.add_parser("cluster-controls",
+                       help="сгруппировать контрольные по репликам (варианты подряд)")
+    p.add_argument("--seed", type=int, default=11)
+    p.add_argument("--batch", default=None, help="только эта партия")
+    p.set_defaults(func=cmd_cluster_controls)
 
     p = sub.add_parser("promote-honeypots",
                        help="отобрать размеченные контрольные в очередь разметчиков")
     p.add_argument("--count", type=int, default=15)
+    p.add_argument("--batch", default=None, help="отбирать только из этой партии")
     p.add_argument("--seed", type=int, default=11)
     p.set_defaults(func=cmd_promote_honeypots)
 

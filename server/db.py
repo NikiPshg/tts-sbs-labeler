@@ -44,6 +44,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     is_control  INTEGER NOT NULL DEFAULT 0,
     control_answer TEXT,                -- yes | no | unsure ; NULL until the admin labels it
     control_active INTEGER NOT NULL DEFAULT 0,  -- promoted into the annotators' queues
+    control_group  TEXT,                -- heading the admin sees, safe to display
     meta        TEXT,                   -- JSON: provenance (input_text, hypothesis, ...)
     created_at  TEXT NOT NULL
 );
@@ -99,6 +100,8 @@ def _migrate(conn: sqlite3.Connection) -> None:
     have = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
     if "control_active" not in have:
         conn.execute("ALTER TABLE tasks ADD COLUMN control_active INTEGER NOT NULL DEFAULT 0")
+    if "control_group" not in have:
+        conn.execute("ALTER TABLE tasks ADD COLUMN control_group TEXT")
 
 
 @contextmanager
