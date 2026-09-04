@@ -244,34 +244,49 @@ def cmd_pick_honeypots(args: argparse.Namespace) -> None:
     print("\nТеперь задайте эталонные ответы: откройте платформу под админом → раздел «Контроль».")
 
 
-STRATA: list[tuple[str, str]] = [
-    # (label, regex over metrics.focus.hypothesis)
-    ("чисто", r"^\s*ооо\s+мфк\s+быстро\s+деньги\s*$"),
-    ("явный брак", r"нфк|мво|быстрые|быстроденьги|вооо"),
-    ("спорно \u00abвоо\u00bb", r"^\s*в[оа]{1,2}\s*мфк|^\s*в[оа]{1,2}\s+мфк"),
-]
+# Strata are derived from the ASR transcript of the brand phrase, not from a
+# fixed list of misreadings: each voice fails differently, so hardcoding one
+# voice's mistakes would silently mis-sort the next batch.
+STRATUM_ORDER = ["чисто", "спорное начало «ООО»", "явный брак", "прочее"]
+
+# "мфк" as the ASR may have split or swallowed it.
+BRAND_CORE = re.compile(r"мф\s?к|м\s?фк|фк")
+# Three separate letters O at the very start, which is what we are judging.
+CLEAN_ONSET = re.compile(r"^\s*о\s*о\s*о\b")
+TAIL_BROKEN = re.compile(r"быстрые|быстроденьги")
+
+
+def stratum_of(meta: dict[str, Any]) -> str:
+    """Bucket a task by how the ASR heard the brand phrase."""
+    focus = (meta.get("focus_hypothesis") or "").strip().lower()
+    if meta.get("focus_exact"):
+        return "чисто"
+    if TAIL_BROKEN.search(focus) or not BRAND_CORE.search(focus):
+        return "явный брак"
+    if not CLEAN_ONSET.match(focus):
+        return "спорное начало «ООО»"
+    return "прочее"
 
 
 def cmd_suggest_honeypots(args: argparse.Namespace) -> None:
     """Stratified honeypot pick: clean / clearly broken / disputed."""
-    rows = db.connect().execute("SELECT id, payload, meta FROM tasks ORDER BY ord, id").fetchall()
-    buckets: dict[str, list[dict[str, Any]]] = {label: [] for label, _ in STRATA}
-    buckets["прочее"] = []
+    where, params = ("WHERE meta LIKE ?", (f'%"batch": "{args.batch}"%',)) if args.batch else ("", ())
+    rows = db.connect().execute(
+        f"SELECT id, payload, meta FROM tasks {where} ORDER BY ord, id", params
+    ).fetchall()
+    if not rows:
+        sys.exit("Нет заданий для отбора" + (f" в партии {args.batch}" if args.batch else ""))
 
+    buckets: dict[str, list[dict[str, Any]]] = {label: [] for label in STRATUM_ORDER}
     for row in rows:
         meta = json.loads(row["meta"]) if row["meta"] else {}
         focus = (meta.get("focus_hypothesis") or "").strip().lower()
-        placed = False
-        for label, pattern in STRATA:
-            if re.search(pattern, focus):
-                buckets[label].append({"id": row["id"], "focus": focus, "meta": meta})
-                placed = True
-                break
-        if not placed:
-            buckets["прочее"].append({"id": row["id"], "focus": focus, "meta": meta})
+        buckets[stratum_of(meta)].append({"id": row["id"], "focus": focus, "meta": meta})
 
     rng = random.Random(args.seed)
-    order = [label for label, _ in STRATA] + ["прочее"]
+    order = STRATUM_ORDER
+    # Bucket sizes are reported below, after the pools have been drained.
+    sizes = {label: len(buckets[label]) for label in order}
     for label in order:
         rng.shuffle(buckets[label])
 
@@ -297,13 +312,13 @@ def cmd_suggest_honeypots(args: argparse.Namespace) -> None:
                 "UPDATE tasks SET is_control = 1 WHERE id = ?", [(c["id"],) for c in chosen]
             )
 
-    print(f"Наполнение страт: " + ", ".join(f"{label}={len(buckets[label])}" for label in order))
+    print("Наполнение страт: " + ", ".join(f"{label}={sizes[label]}" for label in order))
     print(f"Отобрано контрольных: {len(chosen)}"
           + (" (помечены в базе)" if args.apply else " (только предпросмотр, добавьте --apply)"))
     print()
-    print(f"{'#':<3} {'страта':<16} {'id':<40} {'ASR на месте бренда':<32} аудио")
-    for i, item in enumerate(sorted(chosen, key=lambda c: (c["stratum"], c["id"])), 1):
-        print(f"{i:<3} {item['stratum']:<16} {item['id']:<40} {item['focus'][:30]:<32} "
+    print(f"{'#':<3} {'страта':<22} {'id':<42} {'ASR на месте бренда':<30} аудио")
+    for i, item in enumerate(sorted(chosen, key=lambda c: (STRATUM_ORDER.index(c["stratum"]), c["id"])), 1):
+        print(f"{i:<3} {item['stratum']:<22} {item['id']:<42} {item['focus'][:28]:<30} "
               f"{item['meta'].get('origin_audio', '')}")
     print()
     print("Эталонные ответы не проставлены — их задаёт человек в разделе «Контроль».")
@@ -319,6 +334,50 @@ def cmd_set_control(args: argparse.Namespace) -> None:
         if cur.rowcount == 0:
             sys.exit(f"Нет задания {args.task_id}")
     print(f"{args.task_id} → эталон {value or 'сброшен'}")
+
+
+def cmd_drop_batch(args: argparse.Namespace) -> None:
+    """Remove a whole batch: its tasks, their answers and their copied audio."""
+    conn = db.connect()
+    rows = conn.execute(
+        "SELECT id, meta FROM tasks WHERE meta LIKE ?", (f'%"batch": "{args.batch}"%',)
+    ).fetchall()
+    if not rows:
+        sys.exit(f"Партия {args.batch} не найдена")
+
+    ids = [r["id"] for r in rows]
+    placeholders = ",".join("?" * len(ids))
+    answers = conn.execute(
+        f"SELECT COUNT(*) AS c FROM annotations WHERE task_id IN ({placeholders})", ids
+    ).fetchone()["c"]
+    removed_files = 0
+    for r in rows:
+        meta = json.loads(r["meta"] or "{}")
+        served = meta.get("served_audio")
+        origin = meta.get("origin_audio")
+        # Only ever delete our own copy, never the source in the benchmark tree.
+        if served and served != origin and Path(served).is_file():
+            Path(served).unlink()
+            removed_files += 1
+
+    with db.tx() as c:
+        c.execute(f"DELETE FROM annotations WHERE task_id IN ({placeholders})", ids)
+        c.execute(f"DELETE FROM tasks WHERE id IN ({placeholders})", ids)
+
+    print(f"Партия {args.batch} удалена: заданий {len(ids)}, ответов {answers}, "
+          f"файлов в media/ {removed_files}")
+
+
+def cmd_batches(_: argparse.Namespace) -> None:
+    counts: dict[str, int] = {}
+    for r in db.connect().execute("SELECT meta FROM tasks"):
+        batch = (json.loads(r["meta"] or "{}").get("batch")) or "(без партии)"
+        counts[batch] = counts.get(batch, 0) + 1
+    if not counts:
+        print("Заданий нет.")
+        return
+    for batch, n in sorted(counts.items()):
+        print(f"  {batch:<20} {n}")
 
 
 def cmd_controls(_: argparse.Namespace) -> None:
@@ -431,6 +490,7 @@ def main() -> None:
                        help="стратифицированный подбор ханипотов (чисто / брак / спорно)")
     p.add_argument("--count", type=int, default=15)
     p.add_argument("--seed", type=int, default=7)
+    p.add_argument("--batch", default=None, help="отбирать только из этой партии")
     p.add_argument("--apply", action="store_true", help="пометить отобранные контрольными")
     p.add_argument("--exclusive", action="store_true", help="снять пометку с остальных")
     p.set_defaults(func=cmd_suggest_honeypots)
@@ -442,6 +502,13 @@ def main() -> None:
 
     p = sub.add_parser("controls", help="список контрольных заданий")
     p.set_defaults(func=cmd_controls)
+
+    p = sub.add_parser("drop-batch", help="удалить партию: задания, ответы и её файлы в media/")
+    p.add_argument("batch")
+    p.set_defaults(func=cmd_drop_batch)
+
+    p = sub.add_parser("batches", help="какие партии загружены")
+    p.set_defaults(func=cmd_batches)
 
     p = sub.add_parser("stats", help="сводка по проекту")
     p.set_defaults(func=cmd_stats)

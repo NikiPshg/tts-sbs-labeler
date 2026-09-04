@@ -56,13 +56,22 @@ cli.py users                          # список ссылок
 cli.py import --predictions p.jsonl \
   --bucket brand_mfk --audio-root ./wav \
   --batch prod --media-dir ./media    # импорт заданий
-cli.py suggest-honeypots --count 15 --apply   # отобрать контрольные
+cli.py suggest-honeypots --count 15 \
+  --batch prod --apply --exclusive    # отобрать контрольные
+cli.py batches                        # какие партии загружены
+cli.py drop-batch prod                # удалить партию с её медиа
 cli.py controls                       # статус эталонов
 cli.py export --csv -o results.csv    # выгрузка
 cli.py stats                          # сводка
 ```
 
 ### Контрольные задания (ханипоты)
+
+`suggest-honeypots` раскладывает задания по стратам, глядя на расшифровку бренда
+(`metrics.focus.hypothesis`): «чисто» — ASR совпал дословно, «спорное начало «ООО»» —
+искажено только начало, «явный брак» — потерян сам бренд или хвост, «прочее» — остальное.
+Страты выводятся из данных, а не из списка ошибок конкретного голоса, поэтому отбор
+переживает смену диктора. Дальше берётся поровну из каждой страты.
 
 Задание с `is_control = 1` показывается **каждому** разметчику вперемешку с обычными
 (по умолчанию одно на семь, настройка `honeypot_every`). Эталонный ответ задаёт администратор
