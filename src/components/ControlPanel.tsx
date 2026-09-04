@@ -40,12 +40,20 @@ function ControlCard({ task, index, onSetControl, onFlag }: {
             Клип {task.code ?? task.id}
             {task.controlActive && <em className="control-live"> · в очереди разметчиков</em>}
           </strong>
-          <span>«{task.text}»</span>
+          {!task.focus && <span>«{task.text}»</span>}
         </div>
         <button className="text-action" onClick={() => onFlag(task.id, false)}>
           Убрать из контрольных
         </button>
       </header>
+
+      {task.focus && (
+        <div className="focus-block focus-block--compact">
+          <span className="focus-label">Проверяем, как произнесено</span>
+          <strong className="focus-value">{task.focus}</strong>
+          <p className="focus-context">В реплике: «{task.text}»</p>
+        </div>
+      )}
 
       {isBoolean(task) ? <AudioPlayer audio={task.audio} tone="neutral" /> : null}
 

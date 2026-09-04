@@ -1510,3 +1510,5 @@ kbd {
 .focus-label { font-size: 8px; font-weight: 660; letter-spacing: .08em; text-transform: uppercase; color: #8079c9; }
 .focus-value { font-size: 20px; font-weight: 660; line-height: 1.35; color: #26272c; }
 .focus-context { max-width: 72ch; font-size: 11px; line-height: 1.6; color: #7b7e88; }
+.focus-block--compact { padding: 13px 16px; gap: 5px; }
+.focus-block--compact .focus-value { font-size: 15px; }

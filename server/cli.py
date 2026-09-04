@@ -563,8 +563,15 @@ def cmd_promote_honeypots(args: argparse.Namespace) -> None:
     take_yes = min(len(pools["yes"]), args.count - take_no)
     chosen = pools["yes"][:take_yes] + pools["no"][:take_no]
 
+    # Only clear the batch being promoted: other batches' honeypots are already
+    # live in their own queues and must not be switched off as a side effect.
+    reset_where = "is_control = 1"
+    reset_params: tuple[Any, ...] = ()
+    if args.batch:
+        reset_where += " AND meta LIKE ?"
+        reset_params = (f'%"batch": "{args.batch}"%',)
     with db.tx() as conn:
-        conn.execute("UPDATE tasks SET control_active = 0 WHERE is_control = 1")
+        conn.execute(f"UPDATE tasks SET control_active = 0 WHERE {reset_where}", reset_params)
         conn.executemany(
             "UPDATE tasks SET control_active = 1 WHERE id = ?", [(i,) for i in chosen]
         )
