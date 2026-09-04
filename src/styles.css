@@ -1487,3 +1487,6 @@ kbd {
 .control-options .boolean-button { flex: 1 1 130px; min-width: 130px; }
 .task-kind--control { margin-left: 5px; gap: 3px; color: #a26b2e; background: #fff2dc; }
 .copy-link { white-space: nowrap; }
+.control-counters { display: flex; flex-wrap: wrap; gap: 7px; justify-content: flex-end; }
+.control-note { margin-top: 6px; color: #8a8d96; }
+.control-live { font-style: normal; font-weight: 500; color: #258359; }

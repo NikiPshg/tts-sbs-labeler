@@ -69,10 +69,12 @@ def _rotation_offset(user_id: str, size: int) -> int:
 def build_queue(user_id: str) -> list[dict[str, Any]]:
     """Deterministic per-user task queue.
 
-    Honeypots that already have a reference answer are shown to everyone and
-    sprinkled between the regular tasks. Regular tasks are handed out until the
-    required overlap is reached; each annotator starts at a different offset so
-    that parallel workers do not all pile onto the same first task.
+    Control tasks never enter the regular pool: the calibration set stays
+    invisible to annotators. Only controls that were given a reference answer
+    *and* promoted are sprinkled between the regular tasks. Regular tasks are
+    handed out until the required overlap is reached; each annotator starts at
+    a different offset so that parallel workers do not all pile onto the same
+    first task.
     """
     conn = db.connect()
     tasks = db.all_tasks()
@@ -85,8 +87,10 @@ def build_queue(user_id: str) -> list[dict[str, Any]]:
         for r in conn.execute("SELECT task_id FROM annotations WHERE user_id = ?", (user_id,))
     }
 
-    controls = [t for t in tasks if t["is_control"] and t["control_answer"]]
-    regular = [t for t in tasks if not (t["is_control"] and t["control_answer"])]
+    controls = [
+        t for t in tasks if t["is_control"] and t["control_answer"] and t["control_active"]
+    ]
+    regular = [t for t in tasks if not t["is_control"]]
 
     open_regular = [
         t for t in regular if t["id"] in mine or counts.get(t["id"], 0) < t["required"]
@@ -118,6 +122,10 @@ def admin_payload(task: dict[str, Any]) -> dict[str, Any]:
     payload = db.task_row_to_payload(task)
     payload["isControl"] = bool(task["is_control"])
     payload["controlAnswer"] = task["control_answer"]
+    payload["controlActive"] = bool(task["control_active"])
+    # The raw id carries the batch name, which would tell the admin which
+    # variant a calibration clip came from. Reference them by an opaque code.
+    payload["code"] = hashlib.sha1(task["id"].encode()).hexdigest()[:6]
     if task["meta"]:
         payload["meta"] = json.loads(task["meta"])
     return payload
@@ -145,6 +153,7 @@ def bootstrap(request: Request) -> dict[str, Any]:
             "annotations": db.annotations_for_export(),
             "quality": quality_report(),
             "controlPending": sum(1 for t in tasks if t["is_control"] and not t["control_answer"]),
+            "controlActive": sum(1 for t in tasks if t["is_control"] and t["control_active"]),
         }
 
     queue = build_queue(user["id"])
@@ -285,7 +294,8 @@ def quality_report() -> dict[str, Any]:
     controls = {
         r["id"]: r["control_answer"]
         for r in conn.execute(
-            "SELECT id, control_answer FROM tasks WHERE is_control = 1 AND control_answer IS NOT NULL"
+            "SELECT id, control_answer FROM tasks "
+            "WHERE is_control = 1 AND control_answer IS NOT NULL AND control_active = 1"
         )
     }
     per_user: dict[str, dict[str, Any]] = {}
@@ -308,7 +318,10 @@ def quality_report() -> dict[str, Any]:
         "controlsTotal": conn.execute(
             "SELECT COUNT(*) AS c FROM tasks WHERE is_control = 1"
         ).fetchone()["c"],
-        "controlsLabeled": len(controls),
+        "controlsActive": len(controls),
+        "controlsLabeled": conn.execute(
+            "SELECT COUNT(*) AS c FROM tasks WHERE is_control = 1 AND control_answer IS NOT NULL"
+        ).fetchone()["c"],
         "perUser": per_user,
     }
 

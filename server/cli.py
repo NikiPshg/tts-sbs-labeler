@@ -198,7 +198,7 @@ def cmd_import(args: argparse.Namespace) -> None:
         }
         rows.append(
             (task_id, start_ord + imported, json.dumps(payload, ensure_ascii=False), overlap,
-             json.dumps(meta, ensure_ascii=False), db.now())
+             1 if args.control else 0, json.dumps(meta, ensure_ascii=False), db.now())
         )
         imported += 1
 
@@ -207,14 +207,16 @@ def cmd_import(args: argparse.Namespace) -> None:
 
     with db.tx() as c:
         c.executemany(
-            "INSERT INTO tasks(id, ord, payload, required, meta, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?) "
+            "INSERT INTO tasks(id, ord, payload, required, is_control, meta, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?) "
             "ON CONFLICT(id) DO UPDATE SET payload = excluded.payload, "
-            "required = excluded.required, meta = excluded.meta",
+            "required = excluded.required, is_control = excluded.is_control, "
+            "meta = excluded.meta",
             rows,
         )
     print(
-        f"Импортировано заданий: {imported} (перекрытие {overlap}). "
+        f"Импортировано {'контрольных ' if args.control else ''}заданий: {imported} "
+        f"(перекрытие {overlap}). "
         f"Пропущено по bucket: {skipped_bucket}, без аудио: {skipped_audio}."
     )
     total = db.connect().execute("SELECT COUNT(*) AS c FROM tasks").fetchone()["c"]
@@ -336,6 +338,123 @@ def cmd_set_control(args: argparse.Namespace) -> None:
     print(f"{args.task_id} → эталон {value or 'сброшен'}")
 
 
+def cmd_unmark_controls(args: argparse.Namespace) -> None:
+    """Return control tasks to the ordinary annotator queue."""
+    where, params = ("meta LIKE ?", (f'%"batch": "{args.batch}"%',)) if args.batch else ("1=1", ())
+    with db.tx() as conn:
+        cur = conn.execute(
+            f"UPDATE tasks SET is_control = 0, control_answer = NULL, control_active = 0 "
+            f"WHERE is_control = 1 AND {where}",
+            params,
+        )
+    print(f"Возвращено в обычную очередь: {cur.rowcount}")
+
+
+def cmd_arrange_controls(args: argparse.Namespace) -> None:
+    """Order the control tasks so two takes of one text are far apart.
+
+    The calibration set is the same phrases synthesised twice. Placed close
+    together the admin starts comparing the pair instead of judging each clip on
+    its own, so spread each text's takes at least --min-gap slots apart.
+    """
+    rows = db.connect().execute(
+        "SELECT id, payload FROM tasks WHERE is_control = 1 ORDER BY ord, id"
+    ).fetchall()
+    if not rows:
+        sys.exit("Контрольных заданий нет")
+
+    # Key on the phrase itself: the two takes come from different datasets, so
+    # their source ids differ and would not group them.
+    pools: dict[str, list[str]] = {}
+    for r in rows:
+        pools.setdefault(json.loads(r["payload"]).get("text", r["id"]), []).append(r["id"])
+
+    rng = random.Random(args.seed)
+    for ids in pools.values():
+        rng.shuffle(ids)
+
+    # Greedy placement with a cooldown: never reuse a text that appeared within
+    # the last min_gap slots, preferring whichever text has most takes left.
+    remaining = {text: list(ids) for text, ids in pools.items()}
+    order: list[tuple[str, str]] = []
+    cooldown: list[str] = []
+    while any(remaining.values()):
+        blocked = set(cooldown)
+        candidates = [t for t, ids in remaining.items() if ids and t not in blocked]
+        if not candidates:  # gap too wide for this set — fall back to any text left
+            candidates = [t for t, ids in remaining.items() if ids]
+        top = max(len(remaining[t]) for t in candidates)
+        text = rng.choice([t for t in candidates if len(remaining[t]) == top])
+        order.append((remaining[text].pop(), text))
+        cooldown.append(text)
+        if len(cooldown) >= max(1, args.min_gap):
+            cooldown.pop(0)
+
+    positions: dict[str, list[int]] = {}
+    for i, (_, text) in enumerate(order):
+        positions.setdefault(text, []).append(i)
+    gaps = [max(v) - min(v) for v in positions.values() if len(v) > 1]
+
+    base = db.connect().execute(
+        "SELECT COALESCE(MIN(ord), 0) AS m FROM tasks WHERE is_control = 1"
+    ).fetchone()["m"]
+    with db.tx() as conn:
+        conn.executemany(
+            "UPDATE tasks SET ord = ? WHERE id = ?",
+            [(base + i, task_id) for i, (task_id, _) in enumerate(order)],
+        )
+    print(f"Порядок контрольных перемешан: {len(order)} заданий, "
+          f"минимальный разрыв между дублями одного текста: {min(gaps) if gaps else '—'} "
+          f"(медиана {sorted(gaps)[len(gaps) // 2] if gaps else '—'})")
+
+
+def cmd_promote_honeypots(args: argparse.Namespace) -> None:
+    """Pick the honeypots that will actually be mixed into the annotators' queue.
+
+    Only clips the admin answered "да" or "нет" qualify: "не разобрать" means the
+    clip is ambiguous, which is exactly what a control must not be.
+    """
+    rows = db.connect().execute(
+        "SELECT id, control_answer, meta FROM tasks "
+        "WHERE is_control = 1 AND control_answer IS NOT NULL ORDER BY ord, id"
+    ).fetchall()
+    if not rows:
+        sys.exit("Нет размеченных контрольных — сначала проставьте эталоны в разделе «Контроль»")
+
+    pools = {"yes": [], "no": []}
+    skipped = 0
+    for r in rows:
+        if r["control_answer"] in pools:
+            pools[r["control_answer"]].append(r["id"])
+        else:
+            skipped += 1
+
+    rng = random.Random(args.seed)
+    for value in pools.values():
+        rng.shuffle(value)
+
+    half = args.count // 2
+    take_yes = min(len(pools["yes"]), args.count - half)
+    take_no = min(len(pools["no"]), args.count - take_yes)
+    take_yes = min(len(pools["yes"]), args.count - take_no)
+    chosen = pools["yes"][:take_yes] + pools["no"][:take_no]
+
+    with db.tx() as conn:
+        conn.execute("UPDATE tasks SET control_active = 0 WHERE is_control = 1")
+        conn.executemany(
+            "UPDATE tasks SET control_active = 1 WHERE id = ?", [(i,) for i in chosen]
+        )
+
+    print(f"Размечено эталонами: {len(rows)} (пропущено «не разобрать»: {skipped})")
+    print(f"Доступно: да={len(pools['yes'])}, нет={len(pools['no'])}")
+    print(f"В очередь разметчиков добавлено {len(chosen)}: да={take_yes}, нет={take_no}")
+    if len(chosen) < args.count:
+        print(f"  ! меньше запрошенных {args.count} — не хватило размеченных клипов")
+    for task_id in chosen:
+        answer = next(r["control_answer"] for r in rows if r["id"] == task_id)
+        print(f"  {answer:<4} {task_id}")
+
+
 def cmd_drop_batch(args: argparse.Namespace) -> None:
     """Remove a whole batch: its tasks, their answers and their copied audio."""
     conn = db.connect()
@@ -382,16 +501,19 @@ def cmd_batches(_: argparse.Namespace) -> None:
 
 def cmd_controls(_: argparse.Namespace) -> None:
     rows = db.connect().execute(
-        "SELECT id, control_answer, payload FROM tasks WHERE is_control = 1 ORDER BY ord, id"
+        "SELECT id, control_answer, control_active, payload FROM tasks "
+        "WHERE is_control = 1 ORDER BY ord, id"
     ).fetchall()
     if not rows:
         print("Контрольных заданий нет.")
         return
     labeled = sum(1 for r in rows if r["control_answer"])
-    print(f"Контрольных: {len(rows)}, с эталоном: {labeled}")
+    active = sum(1 for r in rows if r["control_active"])
+    print(f"Контрольных: {len(rows)}, с эталоном: {labeled}, в очереди разметчиков: {active}")
     for r in rows:
-        text = json.loads(r["payload"]).get("text", "")[:60]
-        print(f"  {r['id']:<28} {r['control_answer'] or '—':<7} {text}")
+        text = json.loads(r["payload"]).get("text", "")[:52]
+        flag = "→очередь" if r["control_active"] else ""
+        print(f"  {r['id']:<44} {r['control_answer'] or '—':<7} {flag:<9} {text}")
 
 
 # --------------------------------------------------------------------------- output
@@ -476,6 +598,8 @@ def main() -> None:
                    help="метка партии: попадает в id и meta, разметчику не видна")
     p.add_argument("--media-dir", default="/root/labeler/media",
                    help="куда скопировать wav под обезличенным именем ('' — не копировать)")
+    p.add_argument("--control", action="store_true",
+                   help="завести как контрольные: разметчики их не увидят")
     p.add_argument("--replace", action="store_true", help="удалить прежние задания и ответы")
     p.set_defaults(func=cmd_import)
 
@@ -502,6 +626,23 @@ def main() -> None:
 
     p = sub.add_parser("controls", help="список контрольных заданий")
     p.set_defaults(func=cmd_controls)
+
+    p = sub.add_parser("unmark-controls", help="вернуть контрольные в обычную очередь")
+    p.add_argument("--batch", default=None, help="только из этой партии")
+    p.set_defaults(func=cmd_unmark_controls)
+
+    p = sub.add_parser("arrange-controls",
+                       help="перемешать контрольные, чтобы одинаковые тексты не шли подряд")
+    p.add_argument("--seed", type=int, default=11)
+    p.add_argument("--min-gap", type=int, default=6,
+                   help="сколько других клипов минимум между дублями одного текста")
+    p.set_defaults(func=cmd_arrange_controls)
+
+    p = sub.add_parser("promote-honeypots",
+                       help="отобрать размеченные контрольные в очередь разметчиков")
+    p.add_argument("--count", type=int, default=15)
+    p.add_argument("--seed", type=int, default=11)
+    p.set_defaults(func=cmd_promote_honeypots)
 
     p = sub.add_parser("drop-batch", help="удалить партию: задания, ответы и её файлы в media/")
     p.add_argument("batch")

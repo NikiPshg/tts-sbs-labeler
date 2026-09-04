@@ -24,6 +24,7 @@ export function ControlPanel({ tasks, onSetControl, onFlag }: ControlPanelProps)
   const controls = useMemo(() => tasks.filter((task) => task.isControl), [tasks])
   const pool = useMemo(() => tasks.filter((task) => !task.isControl), [tasks])
   const labeled = controls.filter((task) => task.controlAnswer).length
+  const active = controls.filter((task) => task.controlActive).length
 
   return (
     <>
@@ -32,21 +33,31 @@ export function ControlPanel({ tasks, onSetControl, onFlag }: ControlPanelProps)
           <div>
             <h3>Контрольные задания (ханипоты)</h3>
             <p>
-              Разметьте каждое эталонным ответом. Контрольные показываются всем разметчикам
-              вперемешку с обычными, а платформа считает, как часто человек совпал с вашим эталоном.
+              Калибровочный набор: эти клипы разметчики не видят. Прослушайте каждый и поставьте
+              эталонный ответ. Потом из размеченных отбираются ханипоты — их подмешивают
+              разметчикам в очередь, и платформа считает, как часто человек совпал с вашим эталоном.
+            </p>
+            <p className="control-note">
+              Оценивайте каждую запись отдельно, не сравнивая с соседними: один и тот же текст
+              встречается дважды, порядок перемешан намеренно.
             </p>
           </div>
-          <span className={`status-chip ${labeled === controls.length && controls.length ? 'status-chip--done' : 'status-chip--work'}`}>
-            <ShieldCheck size={15} /> {labeled} / {controls.length} с эталоном
-          </span>
+          <div className="control-counters">
+            <span className={`status-chip ${labeled === controls.length && controls.length ? 'status-chip--done' : 'status-chip--work'}`}>
+              <ShieldCheck size={15} /> {labeled} / {controls.length} с эталоном
+            </span>
+            {active > 0 && (
+              <span className="status-chip status-chip--done">{active} в очереди разметчиков</span>
+            )}
+          </div>
         </header>
       </section>
 
       {!controls.length && (
         <section className="admin-card">
           <p className="control-empty">
-            Контрольных заданий пока нет. Пометьте их на сервере командой
-            <code> cli.py pick-honeypots --count 15</code> — или включите список ниже и выберите вручную.
+            Контрольных заданий пока нет. Загрузите калибровочный набор командой
+            <code> cli.py import ... --control</code> — или включите список ниже и выберите вручную.
           </p>
           <button className="text-action" onClick={() => setShowPool((value) => !value)}>
             {showPool ? 'Скрыть список заданий' : 'Выбрать вручную'}
@@ -59,7 +70,10 @@ export function ControlPanel({ tasks, onSetControl, onFlag }: ControlPanelProps)
           <header className="control-card-header">
             <span className="control-index">{index + 1}</span>
             <div>
-              <strong>{task.id}</strong>
+              <strong>
+                Клип {task.code ?? task.id}
+                {task.controlActive && <em className="control-live"> · в очереди разметчиков</em>}
+              </strong>
               <span>«{task.text}»</span>
             </div>
             <button className="text-action" onClick={() => onFlag(task.id, false)}>
@@ -105,7 +119,7 @@ export function ControlPanel({ tasks, onSetControl, onFlag }: ControlPanelProps)
               {pool.slice(0, 200).map((task) => (
                 <div className="activity-row" key={task.id}>
                   <span className="task-kind task-kind--boolean">Да/Нет</span>
-                  <div className="activity-copy"><strong>{task.id}</strong><span>{task.text}</span></div>
+                  <div className="activity-copy"><strong>Клип {task.code ?? task.id}</strong><span>{task.text}</span></div>
                   <button className="text-action" onClick={() => onFlag(task.id, true)}>
                     <Star size={15} /> В контрольные
                   </button>

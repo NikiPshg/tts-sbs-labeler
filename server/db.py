@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS tasks (
     required    INTEGER NOT NULL DEFAULT 3,
     is_control  INTEGER NOT NULL DEFAULT 0,
     control_answer TEXT,                -- yes | no | unsure ; NULL until the admin labels it
+    control_active INTEGER NOT NULL DEFAULT 0,  -- promoted into the annotators' queues
     meta        TEXT,                   -- JSON: provenance (input_text, hypothesis, ...)
     created_at  TEXT NOT NULL
 );
@@ -84,12 +85,20 @@ def connect() -> sqlite3.Connection:
             _conn.execute("PRAGMA journal_mode=WAL")
             _conn.execute("PRAGMA foreign_keys=ON")
             _conn.executescript(SCHEMA)
+            _migrate(_conn)
             for key, value in DEFAULT_SETTINGS.items():
                 _conn.execute(
                     "INSERT OR IGNORE INTO settings(key, value) VALUES (?, ?)", (key, value)
                 )
             _conn.commit()
         return _conn
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Add columns introduced after the first deployment."""
+    have = {row["name"] for row in conn.execute("PRAGMA table_info(tasks)")}
+    if "control_active" not in have:
+        conn.execute("ALTER TABLE tasks ADD COLUMN control_active INTEGER NOT NULL DEFAULT 0")
 
 
 @contextmanager

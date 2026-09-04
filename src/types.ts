@@ -28,6 +28,9 @@ interface BaseTask {
   /** Honeypot flag and reference answer. Sent to the admin only. */
   isControl?: boolean
   controlAnswer?: AnswerValue | null
+  controlActive?: boolean
+  /** Opaque short code: the raw id would reveal which batch a clip came from. */
+  code?: string
   meta?: Record<string, unknown>
 }
 
@@ -75,6 +78,7 @@ export interface QualityUser {
 
 export interface QualityReport {
   controlsTotal: number
+  controlsActive: number
   controlsLabeled: number
   perUser: Record<string, QualityUser>
 }
