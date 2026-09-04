@@ -1,5 +1,5 @@
 import { ArrowRight, BarChart3, Check, Clock3, Headphones, Sparkles, Target } from 'lucide-react'
-import { getConsensus, labelerStats } from '../analytics'
+import { labelerStats } from '../analytics'
 import type { Annotation, AppUser, LabelingTask } from '../types'
 import { Avatar } from './Avatar'
 
@@ -52,19 +52,17 @@ export function AnnotatorHome({ user, tasks, annotations, onStart }: AnnotatorHo
       <section className="annotator-history admin-card">
         <header className="admin-card-header">
           <div><h3>Мои задания</h3><p>Вам показываются только назначенные аудио</p></div>
-          <span className="assignment-rule"><span>×</span> Перекрытие ограничивает выдачу</span>
+          <span className="assignment-rule"><span>×</span> Очередь формируется сервером</span>
         </header>
         <div className="annotator-task-list">
           {assigned.map((task, index) => {
             const answer = userAnswers.get(task.id)
-            const result = getConsensus(task, annotations)
             return (
               <div key={task.id}>
                 <span className={`task-index ${answer ? 'is-done' : ''}`}>{answer ? <Check size={14} /> : index + 1}</span>
                 <div className="activity-copy"><strong>{task.text}</strong><span>{task.type === 'pairwise' ? 'A/B сравнение' : task.question}</span></div>
                 <div className="my-task-status">
                   {answer ? <span className="status-chip status-chip--done">Готово</span> : <span className="status-chip status-chip--work">Ожидает вас</span>}
-                  <small>{result.count}/{result.required} ответов собрано</small>
                 </div>
               </div>
             )

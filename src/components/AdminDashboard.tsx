@@ -13,10 +13,13 @@ import {
   UserPlus,
   Users,
   AudioWaveform,
+  ShieldCheck,
+  Copy,
 } from 'lucide-react'
 import { answerLabels, getConsensus, labelerStats } from '../analytics'
-import type { AdminSection, Annotation, AppUser, LabelingTask } from '../types'
+import type { AdminSection, Annotation, AppUser, LabelingTask, QualityReport } from '../types'
 import { Avatar } from './Avatar'
+import { ControlPanel } from './ControlPanel'
 
 interface AdminDashboardProps {
   project: string
@@ -25,6 +28,11 @@ interface AdminDashboardProps {
   annotations: Annotation[]
   users: AppUser[]
   defaultOverlap: number
+  quality?: QualityReport
+  inviteLinks: Array<{ id: string; name: string; link: string }>
+  onSetControl: (taskId: string, value: import('../types').AnswerValue | null) => void
+  onFlagControl: (taskId: string, isControl: boolean) => void
+  onCopyLink: (link: string) => void
   onSectionChange: (section: AdminSection) => void
   onCreateTask: () => void
   onInvite: () => void
@@ -38,6 +46,7 @@ interface AdminDashboardProps {
 const sectionMeta: Record<AdminSection, { title: string; description: string }> = {
   overview: { title: 'Обзор проекта', description: 'Прогресс, качество и состояние разметки' },
   tasks: { title: 'Задания', description: 'Создавайте задания и управляйте перекрытием' },
+  control: { title: 'Контроль', description: 'Ханипоты: эталонные ответы и точность разметчиков' },
   annotators: { title: 'Разметчики', description: 'Нагрузка, прогресс и согласие с остальными' },
   settings: { title: 'Настройки', description: 'Правила назначения и консенсуса проекта' },
 }
@@ -156,7 +165,10 @@ function TasksView({ tasks, annotations, onCreateTask, onTaskOverlap }: Pick<Adm
               return (
                 <tr key={task.id}>
                   <td><div className="table-task-copy"><strong>{task.text}</strong><span>{task.question}</span></div></td>
-                  <td><span className={`task-kind task-kind--${task.type}`}>{task.type === 'pairwise' ? 'A/B' : 'Да/Нет'}</span></td>
+                  <td>
+                    <span className={`task-kind task-kind--${task.type}`}>{task.type === 'pairwise' ? 'A/B' : 'Да/Нет'}</span>
+                    {task.isControl && <span className="task-kind task-kind--control" title={`Эталон: ${task.controlAnswer ? answerLabels[task.controlAnswer] : 'не задан'}`}><ShieldCheck size={13} /> Контроль</span>}
+                  </td>
                   <td>
                     <div className="inline-overlap">
                       <span>{result.count}</span>
@@ -185,8 +197,9 @@ function TasksView({ tasks, annotations, onCreateTask, onTaskOverlap }: Pick<Adm
   )
 }
 
-function AnnotatorsView({ tasks, annotations, users, onInvite, onToggleUser }: Pick<AdminDashboardProps, 'tasks' | 'annotations' | 'users' | 'onInvite' | 'onToggleUser'>) {
+function AnnotatorsView({ tasks, annotations, users, quality, inviteLinks, onInvite, onToggleUser, onCopyLink }: Pick<AdminDashboardProps, 'tasks' | 'annotations' | 'users' | 'quality' | 'inviteLinks' | 'onInvite' | 'onToggleUser' | 'onCopyLink'>) {
   const labelers = users.filter((user) => user.role === 'annotator')
+  const links = new Map(inviteLinks.map((item) => [item.id, item.link]))
   return (
     <section className="admin-card table-card">
       <header className="admin-card-header admin-card-header--toolbar">
@@ -195,15 +208,31 @@ function AnnotatorsView({ tasks, annotations, users, onInvite, onToggleUser }: P
       </header>
       <div className="admin-table-scroll">
         <table className="admin-table labeler-table">
-          <thead><tr><th>Разметчик</th><th>Прогресс</th><th>Ответов</th><th>Совпадение</th><th>Статус</th></tr></thead>
+          <thead><tr><th>Разметчик</th><th>Ссылка</th><th>Ответов</th><th>Контроль</th><th>Совпадение</th><th>Статус</th></tr></thead>
           <tbody>
             {labelers.map((user) => {
               const stats = labelerStats(user, tasks, annotations)
+              const control = quality?.perUser?.[user.id]
+              const link = links.get(user.id)
               return (
                 <tr key={user.id}>
                   <td><div className="user-cell"><Avatar user={user} /><span><strong>{user.name}</strong><small>{user.email}</small></span></div></td>
-                  <td><div className="table-progress"><span><b>{stats.progress}%</b><small>{stats.completed} из {stats.assigned}</small></span><i><b style={{ width: `${stats.progress}%` }} /></i></div></td>
+                  <td>
+                    {link ? (
+                      <button className="text-action copy-link" onClick={() => onCopyLink(link)} title={link}>
+                        <Copy size={15} /> Скопировать
+                      </button>
+                    ) : <span className="muted-dash">—</span>}
+                  </td>
                   <td><strong className="response-count">{stats.completed}</strong></td>
+                  <td>
+                    <div className="agreement-cell">
+                      <b className={`agreement agreement--${agreementTone(control?.accuracy ?? null)}`}>
+                        {control?.accuracy === null || control?.accuracy === undefined ? '—' : `${control.accuracy}%`}
+                      </b>
+                      <span>{control?.checked ? `${control.correct} из ${control.checked}` : 'нет ответов'}</span>
+                    </div>
+                  </td>
                   <td>
                     <div className="agreement-cell">
                       <b className={`agreement agreement--${agreementTone(stats.agreement.value)}`}>{stats.agreement.value === null ? '—' : `${stats.agreement.value}%`}</b>
@@ -262,12 +291,13 @@ export function AdminDashboard(props: AdminDashboardProps) {
         <nav>
           <button className={props.section === 'overview' ? 'is-active' : ''} onClick={() => props.onSectionChange('overview')}><Gauge size={18} /> Обзор</button>
           <button className={props.section === 'tasks' ? 'is-active' : ''} onClick={() => props.onSectionChange('tasks')}><ClipboardList size={18} /> Задания <span>{props.tasks.length}</span></button>
+          <button className={props.section === 'control' ? 'is-active' : ''} onClick={() => props.onSectionChange('control')}><ShieldCheck size={18} /> Контроль <span>{props.tasks.filter((task) => task.isControl).length}</span></button>
           <button className={props.section === 'annotators' ? 'is-active' : ''} onClick={() => props.onSectionChange('annotators')}><Users size={18} /> Разметчики <span>{props.users.filter((user) => user.role === 'annotator').length}</span></button>
           <button className={props.section === 'settings' ? 'is-active' : ''} onClick={() => props.onSectionChange('settings')}><Settings size={18} /> Настройки</button>
         </nav>
         <div className="sidebar-rule" />
         <button className="sidebar-export" onClick={props.onExport}><Download size={17} /> Экспорт результатов</button>
-        <div className="sidebar-info"><AudioWaveform size={17} /><span><strong>Локальный MVP</strong><small>Данные сохраняются в этом браузере</small></span></div>
+        <div className="sidebar-info"><AudioWaveform size={17} /><span><strong>Ответы на сервере</strong><small>SQLite, общий для всей команды</small></span></div>
       </aside>
 
       <main className="admin-content">
@@ -278,6 +308,7 @@ export function AdminDashboard(props: AdminDashboardProps) {
 
         {props.section === 'overview' && <Overview {...props} />}
         {props.section === 'tasks' && <TasksView {...props} />}
+        {props.section === 'control' && <ControlPanel tasks={props.tasks} onSetControl={props.onSetControl} onFlag={props.onFlagControl} />}
         {props.section === 'annotators' && <AnnotatorsView {...props} />}
         {props.section === 'settings' && <SettingsView {...props} />}
       </main>

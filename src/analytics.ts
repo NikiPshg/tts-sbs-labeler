@@ -116,5 +116,5 @@ export const answerLabels: Record<AnswerValue, string> = {
   tie: 'Равноценны',
   yes: 'Да',
   no: 'Нет',
-  unsure: 'Не уверен',
+  unsure: 'Не разобрать',
 }

@@ -6,156 +6,61 @@ import {
   ChevronDown,
   CircleHelp,
   Download,
-  FileJson,
   Keyboard,
   LogOut,
   MoreHorizontal,
-  RotateCcw,
+  RefreshCw,
   ShieldCheck,
-  Sparkles,
-  Upload,
   X,
 } from 'lucide-react'
-import { answerLabels, assignAnnotators, getConsensus, rebalanceTask } from './analytics'
 import { AdminDashboard } from './components/AdminDashboard'
 import { AnnotatorHome } from './components/AnnotatorHome'
 import { Avatar } from './components/Avatar'
 import { BooleanTaskView } from './components/BooleanTaskView'
-import { CreateTaskModal } from './components/CreateTaskModal'
 import { InviteAnnotatorModal } from './components/InviteAnnotatorModal'
+import { LoginScreen } from './components/LoginScreen'
 import { Logo } from './components/Logo'
 import { PairwiseTaskView } from './components/PairwiseTaskView'
-import {
-  demoAnnotations,
-  demoDefaultOverlap,
-  demoProject,
-  demoTasks,
-  demoUsers,
-} from './data'
+import { api, clearToken, exportUrl, readToken, storeToken, type Bootstrap } from './api'
 import type {
   AdminSection,
   Annotation,
   AnswerValue,
   AppUser,
   BooleanChoice,
-  LabelingTask,
   PairwiseChoice,
-  TaskBundle,
 } from './types'
-
-const WORKSPACE_KEY = 'sbs-lab:workspace-v3'
-const CURRENT_USER_KEY = 'sbs-lab:current-user'
-
-interface StoredWorkspace {
-  project: string
-  defaultOverlap: number
-  tasks: LabelingTask[]
-  users: AppUser[]
-  annotations: Annotation[]
-}
-
-function demoWorkspace(): StoredWorkspace {
-  return {
-    project: demoProject,
-    defaultOverlap: demoDefaultOverlap,
-    tasks: demoTasks,
-    users: demoUsers,
-    annotations: demoAnnotations,
-  }
-}
-
-function readWorkspace(): StoredWorkspace {
-  try {
-    const stored = localStorage.getItem(WORKSPACE_KEY)
-    if (stored) {
-      const parsed = JSON.parse(stored) as StoredWorkspace
-      if (parsed.tasks?.length && parsed.users?.length && Array.isArray(parsed.annotations)) return parsed
-    }
-  } catch {
-    // A broken local state should never block the demo workspace.
-  }
-  return demoWorkspace()
-}
-
-function isValidTask(task: unknown): task is LabelingTask {
-  if (!task || typeof task !== 'object') return false
-  const item = task as Record<string, unknown>
-  if (typeof item.id !== 'string' || typeof item.text !== 'string') return false
-
-  if (item.type === 'pairwise') {
-    const audioA = item.audioA as Record<string, unknown> | undefined
-    const audioB = item.audioB as Record<string, unknown> | undefined
-    return typeof audioA?.src === 'string' && typeof audioB?.src === 'string'
-  }
-
-  if (item.type === 'boolean') {
-    const audio = item.audio as Record<string, unknown> | undefined
-    return typeof item.question === 'string' && typeof audio?.src === 'string'
-  }
-
-  return false
-}
-
-function parseBundle(value: unknown): TaskBundle {
-  const rawTasks = Array.isArray(value)
-    ? value
-    : (value && typeof value === 'object' ? (value as Record<string, unknown>).tasks : undefined)
-  if (!Array.isArray(rawTasks) || !rawTasks.length || !rawTasks.every(isValidTask)) {
-    throw new Error('Ожидался непустой массив корректных задач')
-  }
-  const object = !Array.isArray(value) && value && typeof value === 'object'
-    ? value as Record<string, unknown>
-    : undefined
-  return {
-    project: typeof object?.project === 'string' ? object.project : 'Импортированный проект',
-    defaultOverlap: typeof object?.defaultOverlap === 'number' ? object.defaultOverlap : undefined,
-    tasks: rawTasks,
-  }
-}
-
-function downloadJson(filename: string, payload: unknown) {
-  const blob = new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
-}
 
 interface AppHeaderProps {
   project: string
   currentUser: AppUser
-  users: AppUser[]
-  accountOpen: boolean
+  token: string
   projectMenuOpen: boolean
-  onAccountOpen: () => void
+  accountOpen: boolean
   onProjectMenuOpen: () => void
-  onSwitchUser: (userId: string) => void
+  onAccountOpen: () => void
   onHelp: () => void
-  onImport: () => void
-  onExport: () => void
-  onExample: () => void
-  onReset: () => void
+  onRefresh: () => void
+  onLogout: () => void
 }
 
 function AppHeader(props: AppHeaderProps) {
+  const isAdmin = props.currentUser.role === 'admin'
   return (
     <header className="topbar app-topbar">
       <Logo />
       <div className="project-pill"><span className="project-dot" /><span>{props.project}</span></div>
       <div className="topbar-actions">
         <button className="icon-text-button header-help" onClick={props.onHelp}><CircleHelp size={18} /><span>Помощь</span></button>
-        {props.currentUser.role === 'admin' && (
+        {isAdmin && (
           <div className="menu-wrap">
             <button className="icon-button" aria-label="Меню проекта" onClick={props.onProjectMenuOpen}><MoreHorizontal size={21} /></button>
             {props.projectMenuOpen && (
               <div className="project-menu">
-                <button onClick={props.onImport}><Upload size={17} /> Импорт задач</button>
-                <button onClick={props.onExport}><Download size={17} /> Экспорт результатов</button>
-                <button onClick={props.onExample}><FileJson size={17} /> Пример JSON</button>
+                <a href={exportUrl(props.token, 'json')}><Download size={17} /> Экспорт JSON</a>
+                <a href={exportUrl(props.token, 'csv')}><Download size={17} /> Экспорт CSV</a>
                 <div className="menu-divider" />
-                <button onClick={props.onReset}><RotateCcw size={17} /> Вернуть демо</button>
+                <button onClick={props.onRefresh}><RefreshCw size={17} /> Обновить данные</button>
               </div>
             )}
           </div>
@@ -163,20 +68,15 @@ function AppHeader(props: AppHeaderProps) {
         <div className="account-menu-wrap">
           <button className="account-switcher" onClick={props.onAccountOpen} aria-expanded={props.accountOpen}>
             <Avatar user={props.currentUser} size="sm" />
-            <span><strong>{props.currentUser.name}</strong><small>{props.currentUser.role === 'admin' ? 'Администратор' : 'Разметчик'}</small></span>
+            <span><strong>{props.currentUser.name}</strong><small>{isAdmin ? 'Администратор' : 'Разметчик'}</small></span>
             <ChevronDown size={15} />
           </button>
           {props.accountOpen && (
             <div className="account-menu">
-              <div className="account-menu-label">Демо-переключение роли</div>
-              {props.users.map((user) => (
-                <button key={user.id} className={user.id === props.currentUser.id ? 'is-current' : ''} onClick={() => props.onSwitchUser(user.id)}>
-                  <Avatar user={user} size="sm" />
-                  <span><strong>{user.name}</strong><small>{user.role === 'admin' ? 'Администратор' : user.status === 'active' ? 'Разметчик' : 'Разметчик · пауза'}</small></span>
-                  {user.id === props.currentUser.id && <Check size={16} />}
-                </button>
-              ))}
-              <div className="account-menu-note"><ShieldCheck size={15} /> Реальную авторизацию подключим через backend</div>
+              <div className="account-menu-label">{props.currentUser.name}</div>
+              <button onClick={props.onRefresh}><RefreshCw size={16} /> Обновить данные</button>
+              <button onClick={props.onLogout}><LogOut size={16} /> Выйти</button>
+              <div className="account-menu-note"><ShieldCheck size={15} /> Ответы сохраняются на сервере</div>
             </div>
           )}
         </div>
@@ -186,51 +86,54 @@ function AppHeader(props: AppHeaderProps) {
 }
 
 function App() {
-  const initial = useMemo(readWorkspace, [])
-  const [project, setProject] = useState(initial.project)
-  const [defaultOverlap, setDefaultOverlap] = useState(initial.defaultOverlap)
-  const [tasks, setTasks] = useState(initial.tasks)
-  const [users, setUsers] = useState(initial.users)
-  const [annotations, setAnnotations] = useState(initial.annotations)
-  const [currentUserId, setCurrentUserId] = useState(() => localStorage.getItem(CURRENT_USER_KEY) ?? 'admin')
+  const [token, setToken] = useState(readToken)
+  const [state, setState] = useState<Bootstrap | null>(null)
+  const [authError, setAuthError] = useState<string | null>(null)
+  const [loading, setLoading] = useState(Boolean(token))
+  const [inviteLinks, setInviteLinks] = useState<Array<{ id: string; name: string; link: string }>>([])
+
   const [adminSection, setAdminSection] = useState<AdminSection>('overview')
   const [labelingMode, setLabelingMode] = useState(false)
   const [currentIndex, setCurrentIndex] = useState(0)
   const [accountOpen, setAccountOpen] = useState(false)
   const [projectMenuOpen, setProjectMenuOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
-  const [createOpen, setCreateOpen] = useState(false)
   const [inviteOpen, setInviteOpen] = useState(false)
   const [completeOpen, setCompleteOpen] = useState(false)
   const [toast, setToast] = useState<string | null>(null)
-  const fileInput = useRef<HTMLInputElement>(null)
   const advanceTimer = useRef<number | undefined>(undefined)
+  const shownAt = useRef<number>(Date.now())
 
-  const currentUser = users.find((user) => user.id === currentUserId) ?? users[0]
-  const assignedTasks = useMemo(
-    () => currentUser.role === 'annotator'
-      ? tasks.filter((task) => task.assigneeIds?.includes(currentUser.id))
-      : [],
-    [currentUser, tasks],
-  )
-  const userAnswers = useMemo(() => new Map(
-    annotations.filter((annotation) => annotation.userId === currentUser.id).map((annotation) => [annotation.taskId, annotation]),
-  ), [annotations, currentUser.id])
-  const currentTask = assignedTasks[currentIndex]
-  const answeredCount = assignedTasks.filter((task) => userAnswers.has(task.id)).length
-  const progress = assignedTasks.length ? (answeredCount / assignedTasks.length) * 100 : 0
-
-  useEffect(() => {
+  const load = useCallback(async (value: string) => {
+    setLoading(true)
     try {
-      localStorage.setItem(WORKSPACE_KEY, JSON.stringify({ project, defaultOverlap, tasks, users, annotations }))
-    } catch {
-      setToast('Локальное хранилище заполнено — экспортируйте проект')
+      const data = await api.bootstrap(value)
+      setState(data)
+      setAuthError(null)
+      storeToken(value)
+      if (data.user.role === 'admin') {
+        try {
+          const { users } = await api.listUsers(value)
+          setInviteLinks(users
+            .filter((user) => user.role === 'annotator')
+            .map((user) => ({ id: user.id, name: user.name, link: `${window.location.origin}${user.link}` })))
+        } catch {
+          // Invite links are a convenience; a failure here must not block the dashboard.
+        }
+      }
+    } catch (error) {
+      setState(null)
+      setAuthError(error instanceof Error ? error.message : 'Не удалось войти')
+      clearToken()
+      setToken('')
+    } finally {
+      setLoading(false)
     }
-  }, [annotations, defaultOverlap, project, tasks, users])
+  }, [])
 
   useEffect(() => {
-    localStorage.setItem(CURRENT_USER_KEY, currentUser.id)
-  }, [currentUser.id])
+    if (token) void load(token)
+  }, [token, load])
 
   useEffect(() => () => window.clearTimeout(advanceTimer.current), [])
 
@@ -240,20 +143,36 @@ function App() {
     return () => window.clearTimeout(timer)
   }, [toast])
 
-  const switchUser = (userId: string) => {
-    window.clearTimeout(advanceTimer.current)
-    setCurrentUserId(userId)
-    setCurrentIndex(0)
-    setLabelingMode(false)
-    setCompleteOpen(false)
+  const refresh = useCallback(() => {
+    setProjectMenuOpen(false)
     setAccountOpen(false)
-  }
+    if (token) void load(token)
+  }, [token, load])
 
-  const startLabeling = () => {
-    const firstUnanswered = assignedTasks.findIndex((task) => !userAnswers.has(task.id))
-    setCurrentIndex(firstUnanswered >= 0 ? firstUnanswered : 0)
-    setLabelingMode(true)
-  }
+  const tasks = state?.tasks ?? []
+  const users = state?.users ?? []
+  const annotations = state?.annotations ?? []
+  const currentUser = state?.user
+
+  const assignedTasks = useMemo(
+    () => currentUser?.role === 'annotator'
+      ? tasks.filter((task) => task.assigneeIds?.includes(currentUser.id))
+      : [],
+    [currentUser, tasks],
+  )
+  const userAnswers = useMemo(() => new Map(
+    annotations
+      .filter((annotation) => annotation.userId === currentUser?.id)
+      .map((annotation) => [annotation.taskId, annotation]),
+  ), [annotations, currentUser?.id])
+
+  const currentTask = assignedTasks[currentIndex]
+  const answeredCount = assignedTasks.filter((task) => userAnswers.has(task.id)).length
+  const progress = assignedTasks.length ? (answeredCount / assignedTasks.length) * 100 : 0
+
+  useEffect(() => {
+    shownAt.current = Date.now()
+  }, [currentIndex, currentTask?.id])
 
   const goTo = useCallback((index: number) => {
     window.clearTimeout(advanceTimer.current)
@@ -261,7 +180,7 @@ function App() {
   }, [assignedTasks.length])
 
   const recordAnswer = useCallback((value: AnswerValue) => {
-    if (!currentTask || currentUser.role !== 'annotator') return
+    if (!currentTask || !currentUser || currentUser.role !== 'annotator') return
     const answer: Annotation = {
       taskId: currentTask.id,
       taskType: currentTask.type,
@@ -270,11 +189,20 @@ function App() {
       answeredAt: new Date().toISOString(),
     }
 
-    setAnnotations((previous) => {
-      const index = previous.findIndex((item) => item.taskId === currentTask.id && item.userId === currentUser.id)
-      if (index < 0) return [...previous, answer]
-      return previous.map((item, itemIndex) => itemIndex === index ? answer : item)
+    // Optimistic update: the annotator should never wait for the round-trip.
+    setState((previous) => {
+      if (!previous) return previous
+      const index = previous.annotations.findIndex(
+        (item) => item.taskId === currentTask.id && item.userId === currentUser.id,
+      )
+      const next = index < 0
+        ? [...previous.annotations, answer]
+        : previous.annotations.map((item, i) => (i === index ? answer : item))
+      return { ...previous, annotations: next }
     })
+
+    void api.answer(token, currentTask.id, value, Date.now() - shownAt.current)
+      .catch((error: Error) => setToast(`Ответ не сохранён: ${error.message}`))
 
     const wasAnswered = userAnswers.has(currentTask.id)
     window.clearTimeout(advanceTimer.current)
@@ -285,7 +213,7 @@ function App() {
         setCompleteOpen(true)
       }
     }, 420)
-  }, [answeredCount, assignedTasks.length, currentIndex, currentTask, currentUser, userAnswers])
+  }, [answeredCount, assignedTasks.length, currentIndex, currentTask, currentUser, token, userAnswers])
 
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
@@ -301,172 +229,115 @@ function App() {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [currentIndex, currentTask, goTo, helpOpen, labelingMode, recordAnswer])
 
-  const createTask = (task: LabelingTask) => {
-    const overlap = Math.max(1, Math.min(7, task.requiredAnnotations ?? defaultOverlap))
-    const assigneeIds = assignAnnotators(users, tasks, annotations, overlap)
-    setTasks((previous) => [...previous, { ...task, requiredAnnotations: overlap, assigneeIds }])
-    setCreateOpen(false)
-    setAdminSection('tasks')
-    setToast(`Задание создано и назначено: ${assigneeIds.length}/${overlap}`)
+  const startLabeling = () => {
+    const firstUnanswered = assignedTasks.findIndex((task) => !userAnswers.has(task.id))
+    setCurrentIndex(firstUnanswered >= 0 ? firstUnanswered : 0)
+    setLabelingMode(true)
   }
 
-  const updateTaskOverlap = (taskId: string, overlap: number) => {
-    const collected = annotations.filter((annotation) => annotation.taskId === taskId).length
-    const safeOverlap = Math.max(collected, Math.max(1, Math.min(7, overlap)))
-    setTasks((previous) => previous.map((task) => task.id === taskId
-      ? rebalanceTask(task, safeOverlap, users, previous, annotations)
-      : task))
-    setToast(`Перекрытие изменено на ${safeOverlap}`)
+  const setControl = (taskId: string, value: AnswerValue | null) => {
+    setState((previous) => previous && {
+      ...previous,
+      tasks: previous.tasks.map((task) => task.id === taskId ? { ...task, controlAnswer: value } : task),
+    })
+    void api.setControl(token, taskId, value)
+      .then(() => setToast(value ? 'Эталон сохранён' : 'Эталон сброшен'))
+      .catch((error: Error) => { setToast(error.message); refresh() })
+  }
+
+  const flagControl = (taskId: string, isControl: boolean) => {
+    setState((previous) => previous && {
+      ...previous,
+      tasks: previous.tasks.map((task) => task.id === taskId
+        ? { ...task, isControl, controlAnswer: isControl ? task.controlAnswer : null }
+        : task),
+    })
+    void api.flagControl(token, taskId, isControl)
+      .then(() => setToast(isControl ? 'Задание стало контрольным' : 'Задание убрано из контрольных'))
+      .catch((error: Error) => { setToast(error.message); refresh() })
   }
 
   const addUser = (user: AppUser) => {
-    const nextUsers = [...users, user]
-    setUsers(nextUsers)
-    setTasks((previous) => previous.map((task) => {
-      const required = task.requiredAnnotations ?? defaultOverlap
-      return (task.assigneeIds?.length ?? 0) < required
-        ? rebalanceTask(task, required, nextUsers, previous, annotations)
-        : task
-    }))
-    setInviteOpen(false)
-    setToast(`${user.name} добавлен в команду`)
+    void api.addUser(token, user.name)
+      .then((created) => {
+        const link = `${window.location.origin}/?t=${created.token}`
+        void navigator.clipboard?.writeText(link).catch(() => undefined)
+        setToast(`${created.user.name}: ссылка скопирована в буфер`)
+        setInviteOpen(false)
+        refresh()
+      })
+      .catch((error: Error) => setToast(error.message))
   }
 
   const toggleUser = (userId: string) => {
-    const nextUsers = users.map((user) => user.id === userId
-      ? { ...user, status: user.status === 'active' ? 'paused' as const : 'active' as const }
-      : user)
-    setUsers(nextUsers)
-    setTasks((previous) => previous.map((task) => {
-      const result = getConsensus(task, annotations)
-      return result.complete ? task : rebalanceTask(task, result.required, nextUsers, previous, annotations)
-    }))
+    void api.toggleUser(token, userId).then(refresh).catch((error: Error) => setToast(error.message))
+  }
+
+  const setDefaultOverlap = (overlap: number) => {
+    setState((previous) => previous && { ...previous, defaultOverlap: overlap })
   }
 
   const applyDefaultOverlap = () => {
-    setTasks((previous) => previous.map((task) => {
-      const result = getConsensus(task, annotations)
-      return result.complete ? task : rebalanceTask(task, Math.max(defaultOverlap, result.count), users, previous, annotations)
-    }))
-    setToast(`Перекрытие ${defaultOverlap} применено к активным заданиям`)
+    void api.settings(token, { defaultOverlap: state?.defaultOverlap ?? 3 })
+      .then(() => { setToast(`Перекрытие ${state?.defaultOverlap} применено`); refresh() })
+      .catch((error: Error) => setToast(error.message))
   }
 
-  const importDataset = async (file: File) => {
-    try {
-      const bundle = parseBundle(JSON.parse(await file.text()))
-      const imported: LabelingTask[] = []
-      const bundleOverlap = Math.max(1, Math.min(7, bundle.defaultOverlap ?? defaultOverlap))
-      bundle.tasks.forEach((task) => {
-        const required = Math.max(1, Math.min(7, task.requiredAnnotations ?? bundleOverlap))
-        imported.push({
-          ...task,
-          requiredAnnotations: required,
-          assigneeIds: assignAnnotators(users, imported, [], required),
-          createdAt: task.createdAt ?? new Date().toISOString(),
-        })
-      })
-      setProject(bundle.project ?? 'Импортированный проект')
-      setDefaultOverlap(bundleOverlap)
-      setTasks(imported)
-      setAnnotations([])
-      setCurrentIndex(0)
-      setProjectMenuOpen(false)
-      setToast(`Загружено задач: ${imported.length}`)
-    } catch (error) {
-      setToast(error instanceof Error ? error.message : 'Не удалось прочитать JSON')
-    } finally {
-      if (fileInput.current) fileInput.current.value = ''
-    }
+  const copyLink = (link: string) => {
+    void navigator.clipboard?.writeText(link)
+      .then(() => setToast('Ссылка скопирована'))
+      .catch(() => setToast(link))
   }
 
-  const exportResults = () => {
-    downloadJson('sbs-project-results.json', {
-      project,
-      exportedAt: new Date().toISOString(),
-      defaultOverlap,
-      users: users.filter((user) => user.role === 'annotator'),
-      tasks: tasks.map((task) => ({
-        ...task,
-        consensus: (() => {
-          const result = getConsensus(task, annotations)
-          return { ...result, label: result.value ? answerLabels[result.value] : null }
-        })(),
-      })),
-      annotations,
-    })
-    setProjectMenuOpen(false)
-    setToast('Результаты экспортированы')
+  const logout = () => {
+    clearToken()
+    setToken('')
+    setState(null)
+    setAccountOpen(false)
   }
 
-  const exportPersonal = () => {
-    downloadJson(`sbs-results-${currentUser.id}.json`, {
-      project,
-      user: currentUser,
-      annotations: annotations.filter((annotation) => annotation.userId === currentUser.id),
-    })
-  }
-
-  const downloadExample = () => {
-    downloadJson('sbs-tasks-example.json', {
-      project: 'Мой TTS эксперимент',
-      defaultOverlap: 3,
-      tasks: demoTasks.slice(0, 2).map((task) => ({ ...task, assigneeIds: undefined })),
-    })
-    setProjectMenuOpen(false)
-  }
-
-  const resetDemo = () => {
-    const demo = demoWorkspace()
-    setProject(demo.project)
-    setDefaultOverlap(demo.defaultOverlap)
-    setTasks(demo.tasks)
-    setUsers(demo.users)
-    setAnnotations(demo.annotations)
-    setCurrentUserId('admin')
-    setAdminSection('overview')
-    setLabelingMode(false)
-    setProjectMenuOpen(false)
-    setToast('Демо восстановлено')
+  if (!state || !currentUser) {
+    return <LoginScreen error={authError} busy={loading} onSubmit={(value) => setToken(value)} />
   }
 
   const currentAnswer = currentTask ? userAnswers.get(currentTask.id)?.value : undefined
-  const activeAnnotators = users.filter((user) => user.role === 'annotator' && user.status === 'active').length
 
   return (
     <div className={`app-shell ${currentUser.role === 'admin' ? 'app-shell--admin' : ''}`}>
       <AppHeader
-        project={project}
+        project={state.project}
         currentUser={currentUser}
-        users={users}
-        accountOpen={accountOpen}
+        token={token}
         projectMenuOpen={projectMenuOpen}
-        onAccountOpen={() => { setAccountOpen((value) => !value); setProjectMenuOpen(false) }}
+        accountOpen={accountOpen}
         onProjectMenuOpen={() => { setProjectMenuOpen((value) => !value); setAccountOpen(false) }}
-        onSwitchUser={switchUser}
+        onAccountOpen={() => { setAccountOpen((value) => !value); setProjectMenuOpen(false) }}
         onHelp={() => setHelpOpen(true)}
-        onImport={() => fileInput.current?.click()}
-        onExport={exportResults}
-        onExample={downloadExample}
-        onReset={resetDemo}
+        onRefresh={refresh}
+        onLogout={logout}
       />
-      <input ref={fileInput} hidden type="file" accept="application/json,.json" onChange={(event) => event.target.files?.[0] && void importDataset(event.target.files[0])} />
 
       {currentUser.role === 'admin' ? (
         <AdminDashboard
-          project={project}
+          project={state.project}
           section={adminSection}
           tasks={tasks}
           annotations={annotations}
           users={users}
-          defaultOverlap={defaultOverlap}
+          defaultOverlap={state.defaultOverlap}
+          quality={state.quality}
+          inviteLinks={inviteLinks}
           onSectionChange={setAdminSection}
-          onCreateTask={() => setCreateOpen(true)}
+          onCreateTask={() => setToast('Задания загружаются с сервера: cli.py import')}
           onInvite={() => setInviteOpen(true)}
-          onExport={exportResults}
-          onTaskOverlap={updateTaskOverlap}
+          onExport={() => { window.location.href = exportUrl(token, 'json') }}
+          onTaskOverlap={() => setToast('Перекрытие меняется общим значением в «Настройках»')}
           onDefaultOverlap={setDefaultOverlap}
           onApplyDefault={applyDefaultOverlap}
           onToggleUser={toggleUser}
+          onSetControl={setControl}
+          onFlagControl={flagControl}
+          onCopyLink={copyLink}
         />
       ) : !labelingMode ? (
         <AnnotatorHome user={currentUser} tasks={tasks} annotations={annotations} onStart={startLabeling} />
@@ -489,7 +360,7 @@ function App() {
                   </button>
                 ))}
               </div>
-              <div className="session-note"><Sparkles size={17} />Ответ сохраняется автоматически</div>
+              <div className="session-note"><ShieldCheck size={17} />Ответ сразу уходит на сервер</div>
             </aside>
             <section className="task-card">
               <div className="task-number">Задание {currentIndex + 1} из {assignedTasks.length}{currentAnswer && <span><Check size={13} /> Ответ сохранён</span>}</div>
@@ -506,9 +377,12 @@ function App() {
             <button disabled={currentIndex === assignedTasks.length - 1} onClick={() => goTo(currentIndex + 1)}>Вперёд <ArrowRight size={19} /></button>
           </footer>
         </>
-      ) : null}
+      ) : (
+        <main className="annotator-home">
+          <section className="admin-card"><p className="control-empty">Заданий пока нет — загляните позже.</p></section>
+        </main>
+      )}
 
-      {createOpen && <CreateTaskModal defaultOverlap={defaultOverlap} activeAnnotators={activeAnnotators} onClose={() => setCreateOpen(false)} onCreate={createTask} />}
       {inviteOpen && <InviteAnnotatorModal onClose={() => setInviteOpen(false)} onCreate={addUser} />}
 
       {helpOpen && (
@@ -516,11 +390,22 @@ function App() {
           <section className="modal" role="dialog" aria-modal="true" aria-labelledby="help-title" onMouseDown={(event) => event.stopPropagation()}>
             <button className="modal-close" onClick={() => setHelpOpen(false)} aria-label="Закрыть"><X size={20} /></button>
             <span className="modal-icon"><Keyboard size={24} /></span>
-            <h2 id="help-title">{currentUser.role === 'admin' ? 'Демо двух ролей' : 'Работайте быстрее'}</h2>
+            <h2 id="help-title">{currentUser.role === 'admin' ? 'Как устроен проект' : 'Как размечать'}</h2>
             {currentUser.role === 'admin' ? (
-              <><p>Переключайте аккаунт справа сверху, чтобы увидеть платформу глазами разметчика.</p><div className="admin-help-note"><ShieldCheck size={18} /><span><strong>Это frontend-заготовка</strong>Роли, назначения и статистика уже работают локально. Для команды потребуется backend и авторизация.</span></div></>
+              <>
+                <p>Задания и ответы лежат в SQLite на сервере. Разметчику выдаётся персональная ссылка — по ней он попадает сразу в свою очередь.</p>
+                <div className="admin-help-note"><ShieldCheck size={18} /><span><strong>Контрольные задания</strong>В разделе «Контроль» задайте эталонный ответ каждому ханипоту. Они показываются всем разметчикам вперемешку с обычными.</span></div>
+              </>
             ) : (
-              <><p>Для всей разметки достаточно пяти клавиш.</p><div className="shortcut-list"><div><kbd>1</kbd><span>Вариант A / Да</span></div><div><kbd>2</kbd><span>Вариант B / Нет</span></div><div><kbd>0</kbd><span>Равно / Не уверен</span></div><div><span><kbd>←</kbd> <kbd>→</kbd></span><span>Назад / вперёд</span></div></div></>
+              <>
+                <p>Прослушайте запись и ответьте на вопрос. Ответ сохраняется сразу, вернуться и изменить его можно в любой момент.</p>
+                <div className="shortcut-list">
+                  <div><kbd>1</kbd><span>Да</span></div>
+                  <div><kbd>2</kbd><span>Нет</span></div>
+                  <div><kbd>0</kbd><span>Не разобрать</span></div>
+                  <div><span><kbd>←</kbd> <kbd>→</kbd></span><span>Назад / вперёд</span></div>
+                </div>
+              </>
             )}
             <button className="modal-primary" onClick={() => setHelpOpen(false)}>Понятно</button>
           </section>
@@ -532,9 +417,9 @@ function App() {
           <section className="modal complete-modal" role="dialog" aria-modal="true" aria-labelledby="complete-title">
             <span className="complete-check"><Check size={30} /></span>
             <h2 id="complete-title">Очередь завершена</h2>
-            <p>Вы разметили {answeredCount} из {assignedTasks.length} назначенных заданий.</p>
+            <p>Вы разметили {answeredCount} из {assignedTasks.length} заданий. Спасибо!</p>
             <button className="modal-primary" onClick={() => { setCompleteOpen(false); setLabelingMode(false) }}><LogOut size={18} /> В личный кабинет</button>
-            <button className="modal-secondary" onClick={exportPersonal}><Download size={17} /> Скачать мои ответы</button>
+            <button className="modal-secondary" onClick={refresh}><RefreshCw size={17} /> Проверить новые задания</button>
           </section>
         </div>
       )}

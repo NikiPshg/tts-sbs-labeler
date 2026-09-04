@@ -16,7 +16,7 @@ const options: Array<{
 }> = [
   { value: 'yes', label: 'Да', shortcut: '1', icon: Check },
   { value: 'no', label: 'Нет', shortcut: '2', icon: X },
-  { value: 'unsure', label: 'Не уверен', shortcut: '0', icon: HelpCircle },
+  { value: 'unsure', label: 'Не разобрать', shortcut: '0', icon: HelpCircle },
 ]
 
 export function BooleanTaskView({ task, answer, onAnswer }: BooleanTaskViewProps) {

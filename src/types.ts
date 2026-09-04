@@ -25,6 +25,10 @@ interface BaseTask {
   requiredAnnotations?: number
   assigneeIds?: string[]
   createdAt?: string
+  /** Honeypot flag and reference answer. Sent to the admin only. */
+  isControl?: boolean
+  controlAnswer?: AnswerValue | null
+  meta?: Record<string, unknown>
 }
 
 export interface PairwiseTask extends BaseTask {
@@ -60,4 +64,17 @@ export interface TaskBundle {
   tasks: LabelingTask[]
 }
 
-export type AdminSection = 'overview' | 'tasks' | 'annotators' | 'settings'
+export type AdminSection = 'overview' | 'tasks' | 'control' | 'annotators' | 'settings'
+
+export interface QualityUser {
+  checked: number
+  correct: number
+  accuracy: number | null
+  misses: Array<{ taskId: string; expected: AnswerValue; got: AnswerValue }>
+}
+
+export interface QualityReport {
+  controlsTotal: number
+  controlsLabeled: number
+  perUser: Record<string, QualityUser>
+}

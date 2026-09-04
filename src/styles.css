@@ -1455,3 +1455,35 @@ kbd {
   .overlap-stepper { align-self: stretch; }
   .overlap-stepper button, .overlap-stepper output { flex: 1; }
 }
+
+/* ---------------------------------------------------------------- login ---- */
+.login-shell { min-height: 100vh; display: grid; place-items: center; padding: 24px; background: #f4f5f7; }
+.login-card {
+  width: min(420px, 100%); display: flex; flex-direction: column; align-items: center;
+  gap: 13px; padding: 34px 30px 30px; border-radius: 18px; background: white;
+  border: 1px solid #e6e7ec; box-shadow: 0 18px 44px rgba(28,30,42,.08); text-align: center;
+}
+.login-card h1 { font-size: 19px; font-weight: 680; color: #26272c; }
+.login-card > p { font-size: 11px; line-height: 1.6; color: #7b7e88; }
+.login-card .form-field { width: 100%; text-align: left; }
+.login-card .modal-primary { width: 100%; }
+.login-error { width: 100%; padding: 9px 11px; border-radius: 9px; font-size: 10px; color: #b4392f; background: #fdeceb; }
+
+/* -------------------------------------------------------------- controls --- */
+.control-intro .admin-card-header { align-items: flex-start; }
+.control-intro p { max-width: 62ch; }
+.control-empty { font-size: 11px; line-height: 1.7; color: #6f727c; }
+.control-empty code { padding: 1px 5px; border-radius: 5px; font-size: 10px; background: #f1f2f6; }
+.control-card { display: flex; flex-direction: column; gap: 13px; }
+.control-card-header { display: flex; align-items: center; gap: 11px; }
+.control-card-header > div { flex: 1; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.control-card-header strong { font-size: 11px; font-weight: 650; color: #26272c; }
+.control-card-header span { font-size: 11px; color: #7b7e88; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.control-index {
+  width: 26px; height: 26px; display: grid; place-items: center; flex: none;
+  border-radius: 8px; font-size: 10px; font-weight: 650; color: #5b51c5; background: #eeecff;
+}
+.control-options { display: flex; flex-wrap: wrap; align-items: center; gap: 9px; }
+.control-options .boolean-button { flex: 1 1 130px; min-width: 130px; }
+.task-kind--control { margin-left: 5px; gap: 3px; color: #a26b2e; background: #fff2dc; }
+.copy-link { white-space: nowrap; }
