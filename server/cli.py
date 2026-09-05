@@ -374,6 +374,57 @@ def cmd_set_control(args: argparse.Namespace) -> None:
     print(f"{args.task_id} → эталон {value or 'сброшен'}")
 
 
+def cmd_backup(args: argparse.Namespace) -> None:
+    """Snapshot the database and dump the answers next to it.
+
+    Uses sqlite's own backup API — the database runs in WAL mode, so copying
+    the .db file alone would silently lose whatever is still in the log.
+    """
+    import sqlite3
+    from datetime import datetime, timezone
+
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
+    out_dir = Path(args.dir).expanduser()
+    out_dir.mkdir(parents=True, exist_ok=True)
+
+    snapshot = out_dir / f"labeler-{stamp}.db"
+    target = sqlite3.connect(snapshot)
+    db.connect().backup(target)
+    target.close()
+
+    conn = db.connect()
+    dump = {
+        "takenAt": db.now(),
+        "settings": {r["key"]: r["value"] for r in conn.execute("SELECT key, value FROM settings")},
+        "users": [db.public_user(u) for u in db.all_users()],
+        "annotations": db.annotations_for_export(),
+        "controls": [
+            {
+                "id": r["id"],
+                "batch": json.loads(r["meta"] or "{}").get("batch"),
+                "group": r["control_group"],
+                "answer": r["control_answer"],
+                "active": bool(r["control_active"]),
+                "sourceId": json.loads(r["meta"] or "{}").get("source_id"),
+                "focus": json.loads(r["payload"]).get("focus"),
+                "variant": json.loads(r["meta"] or "{}").get("variant"),
+            }
+            for r in conn.execute(
+                "SELECT id, meta, payload, control_group, control_answer, control_active "
+                "FROM tasks WHERE is_control = 1 ORDER BY ord"
+            )
+        ],
+    }
+    answers = out_dir / f"answers-{stamp}.json"
+    answers.write_text(json.dumps(dump, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    labeled = sum(1 for c in dump["controls"] if c["answer"])
+    print(f"Снимок базы:   {snapshot} ({snapshot.stat().st_size} байт)")
+    print(f"Выгрузка:      {answers}")
+    print(f"  ответов разметчиков: {len(dump['annotations'])}")
+    print(f"  эталонов в контроле: {labeled} из {len(dump['controls'])}")
+
+
 def cmd_unmark_controls(args: argparse.Namespace) -> None:
     """Return control tasks to the ordinary annotator queue."""
     where, params = ("meta LIKE ?", (f'%"batch": "{args.batch}"%',)) if args.batch else ("1=1", ())
@@ -766,6 +817,10 @@ def main() -> None:
 
     p = sub.add_parser("controls", help="список контрольных заданий")
     p.set_defaults(func=cmd_controls)
+
+    p = sub.add_parser("backup", help="снимок базы + выгрузка ответов в JSON")
+    p.add_argument("--dir", default="/root/labeler/backup")
+    p.set_defaults(func=cmd_backup)
 
     p = sub.add_parser("unmark-controls", help="вернуть контрольные в обычную очередь")
     p.add_argument("--batch", default=None, help="только из этой партии")
