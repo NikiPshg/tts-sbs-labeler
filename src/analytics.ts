@@ -110,11 +110,17 @@ export function rebalanceTask(
   return { ...task, requiredAnnotations: count, assigneeIds: [...retained, ...candidates] }
 }
 
-export const answerLabels: Record<AnswerValue, string> = {
+const fixedAnswerLabels: Record<string, string> = {
   a: 'Вариант A',
   b: 'Вариант B',
   tie: 'Равноценны',
   yes: 'Да',
   no: 'Нет',
   unsure: 'Не уверен',
+  none: 'Нет акцента',
+}
+
+export function answerLabel(value: AnswerValue) {
+  if (value.startsWith('word:')) return `«${value.split(':').slice(2).join(':')}»`
+  return fixedAnswerLabels[value] ?? value
 }

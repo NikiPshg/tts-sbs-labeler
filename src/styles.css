@@ -608,6 +608,46 @@ kbd {
 .tie-button kbd { margin-left: 3px; }
 
 .boolean-view { max-width: 700px; margin: auto; }
+
+.task-type--focus {
+  color: #8a5a12;
+  background: #fbf0dc;
+}
+
+.focus-words {
+  width: min(570px, 100%);
+  margin: 21px auto 0;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+.focus-word {
+  min-height: 44px;
+  padding: 0 10px 0 14px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid #dedfe4;
+  border-radius: 11px;
+  background: white;
+  font-size: 17px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 140ms ease;
+}
+
+.focus-word:hover, .focus-word.is-selected { border-color: #e8c78d; background: #fdf6e9; color: #8a5a12; }
+.focus-word:focus-visible { outline: 2px solid #c9a15a; outline-offset: 2px; }
+
+.focus-extra {
+  width: min(570px, 100%);
+  margin: 14px auto 0;
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 10px;
+}
 .boolean-view .prompt-text { margin-top: 27px; }
 
 .single-audio {

@@ -1,6 +1,8 @@
 export type PairwiseChoice = 'a' | 'b' | 'tie'
 export type BooleanChoice = 'yes' | 'no' | 'unsure'
-export type AnswerValue = PairwiseChoice | BooleanChoice
+/** A word from the task text (`word:<index>:<word>`), no accent at all, or unsure. */
+export type FocusChoice = `word:${number}:${string}` | 'none' | 'unsure'
+export type AnswerValue = PairwiseChoice | BooleanChoice | FocusChoice
 export type UserRole = 'admin' | 'annotator'
 export type UserStatus = 'active' | 'paused'
 
@@ -40,7 +42,13 @@ export interface BooleanTask extends BaseTask {
   audio: AudioSource
 }
 
-export type LabelingTask = PairwiseTask | BooleanTask
+export interface FocusTask extends BaseTask {
+  type: 'focus'
+  question: string
+  audio: AudioSource
+}
+
+export type LabelingTask = PairwiseTask | BooleanTask | FocusTask
 
 export interface TaskAnswer {
   taskId: string
@@ -58,6 +66,7 @@ export interface TaskBundle {
   project?: string
   defaultOverlap?: number
   tasks: LabelingTask[]
+  users?: AppUser[]
 }
 
 export type AdminSection = 'overview' | 'tasks' | 'annotators' | 'settings'

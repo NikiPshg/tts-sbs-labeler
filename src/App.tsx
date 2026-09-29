@@ -16,11 +16,13 @@ import {
   Upload,
   X,
 } from 'lucide-react'
-import { answerLabels, assignAnnotators, getConsensus, rebalanceTask } from './analytics'
+import { answerLabel, assignAnnotators, getConsensus, rebalanceTask } from './analytics'
 import { AdminDashboard } from './components/AdminDashboard'
 import { AnnotatorHome } from './components/AnnotatorHome'
 import { Avatar } from './components/Avatar'
 import { BooleanTaskView } from './components/BooleanTaskView'
+import { FocusTaskView } from './components/FocusTaskView'
+import { focusWords } from './focus'
 import { CreateTaskModal } from './components/CreateTaskModal'
 import { InviteAnnotatorModal } from './components/InviteAnnotatorModal'
 import { Logo } from './components/Logo'
@@ -38,6 +40,7 @@ import type {
   AnswerValue,
   AppUser,
   BooleanChoice,
+  FocusChoice,
   LabelingTask,
   PairwiseChoice,
   TaskBundle,
@@ -88,12 +91,20 @@ function isValidTask(task: unknown): task is LabelingTask {
     return typeof audioA?.src === 'string' && typeof audioB?.src === 'string'
   }
 
-  if (item.type === 'boolean') {
+  if (item.type === 'boolean' || item.type === 'focus') {
     const audio = item.audio as Record<string, unknown> | undefined
     return typeof item.question === 'string' && typeof audio?.src === 'string'
   }
 
   return false
+}
+
+function isValidUser(user: unknown): user is AppUser {
+  if (!user || typeof user !== 'object') return false
+  const item = user as Record<string, unknown>
+  return typeof item.id === 'string' && typeof item.name === 'string'
+    && (item.role === 'admin' || item.role === 'annotator')
+    && (item.status === 'active' || item.status === 'paused')
 }
 
 function parseBundle(value: unknown): TaskBundle {
@@ -106,10 +117,13 @@ function parseBundle(value: unknown): TaskBundle {
   const object = !Array.isArray(value) && value && typeof value === 'object'
     ? value as Record<string, unknown>
     : undefined
+  const rawUsers = object?.users
+  const users = Array.isArray(rawUsers) && rawUsers.length && rawUsers.every(isValidUser) ? rawUsers : undefined
   return {
     project: typeof object?.project === 'string' ? object.project : 'Импортированный проект',
     defaultOverlap: typeof object?.defaultOverlap === 'number' ? object.defaultOverlap : undefined,
     tasks: rawTasks,
+    users,
   }
 }
 
@@ -293,6 +307,13 @@ function App() {
       if (!labelingMode || !currentTask || target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || helpOpen) return
       if (event.key === 'ArrowLeft') goTo(currentIndex - 1)
       if (event.key === 'ArrowRight') goTo(currentIndex + 1)
+      if (currentTask.type === 'focus') {
+        const words = focusWords(currentTask.text)
+        const index = Number(event.key) - 1
+        if (event.key === '0') recordAnswer('unsure')
+        else if (Number.isInteger(index) && index >= 0 && index < Math.min(9, words.length)) recordAnswer(`word:${index}:${words[index]}`)
+        return
+      }
       if (event.key === '1') recordAnswer(currentTask.type === 'pairwise' ? 'a' : 'yes')
       if (event.key === '2') recordAnswer(currentTask.type === 'pairwise' ? 'b' : 'no')
       if (event.key === '0') recordAnswer(currentTask.type === 'pairwise' ? 'tie' : 'unsure')
@@ -354,17 +375,21 @@ function App() {
   const importDataset = async (file: File) => {
     try {
       const bundle = parseBundle(JSON.parse(await file.text()))
+      const nextUsers = bundle.users ?? users
+      const knownIds = new Set(nextUsers.map((user) => user.id))
       const imported: LabelingTask[] = []
       const bundleOverlap = Math.max(1, Math.min(7, bundle.defaultOverlap ?? defaultOverlap))
       bundle.tasks.forEach((task) => {
         const required = Math.max(1, Math.min(7, task.requiredAnnotations ?? bundleOverlap))
+        const presetIds = task.assigneeIds?.filter((id) => knownIds.has(id))
         imported.push({
           ...task,
           requiredAnnotations: required,
-          assigneeIds: assignAnnotators(users, imported, [], required),
+          assigneeIds: presetIds?.length ? presetIds : assignAnnotators(nextUsers, imported, [], required),
           createdAt: task.createdAt ?? new Date().toISOString(),
         })
       })
+      if (bundle.users) setUsers(bundle.users)
       setProject(bundle.project ?? 'Импортированный проект')
       setDefaultOverlap(bundleOverlap)
       setTasks(imported)
@@ -389,7 +414,7 @@ function App() {
         ...task,
         consensus: (() => {
           const result = getConsensus(task, annotations)
-          return { ...result, label: result.value ? answerLabels[result.value] : null }
+          return { ...result, label: result.value ? answerLabel(result.value) : null }
         })(),
       })),
       annotations,
@@ -495,6 +520,8 @@ function App() {
               <div className="task-number">Задание {currentIndex + 1} из {assignedTasks.length}{currentAnswer && <span><Check size={13} /> Ответ сохранён</span>}</div>
               {currentTask.type === 'pairwise' ? (
                 <PairwiseTaskView task={currentTask} answer={currentAnswer as PairwiseChoice | undefined} onAnswer={recordAnswer} />
+              ) : currentTask.type === 'focus' ? (
+                <FocusTaskView task={currentTask} answer={currentAnswer as FocusChoice | undefined} onAnswer={recordAnswer} />
               ) : (
                 <BooleanTaskView task={currentTask} answer={currentAnswer as BooleanChoice | undefined} onAnswer={recordAnswer} />
               )}
@@ -520,7 +547,7 @@ function App() {
             {currentUser.role === 'admin' ? (
               <><p>Переключайте аккаунт справа сверху, чтобы увидеть платформу глазами разметчика.</p><div className="admin-help-note"><ShieldCheck size={18} /><span><strong>Это frontend-заготовка</strong>Роли, назначения и статистика уже работают локально. Для команды потребуется backend и авторизация.</span></div></>
             ) : (
-              <><p>Для всей разметки достаточно пяти клавиш.</p><div className="shortcut-list"><div><kbd>1</kbd><span>Вариант A / Да</span></div><div><kbd>2</kbd><span>Вариант B / Нет</span></div><div><kbd>0</kbd><span>Равно / Не уверен</span></div><div><span><kbd>←</kbd> <kbd>→</kbd></span><span>Назад / вперёд</span></div></div></>
+              <><p>Для всей разметки достаточно пяти клавиш.</p><div className="shortcut-list"><div><kbd>1</kbd><span>Вариант A / Да</span></div><div><kbd>2</kbd><span>Вариант B / Нет</span></div><div><kbd>0</kbd><span>Равно / Не уверен</span></div><div><span><kbd>1</kbd>–<kbd>9</kbd></span><span>Слово с акцентом (задание «Акцент»)</span></div><div><span><kbd>←</kbd> <kbd>→</kbd></span><span>Назад / вперёд</span></div></div></>
             )}
             <button className="modal-primary" onClick={() => setHelpOpen(false)}>Понятно</button>
           </section>

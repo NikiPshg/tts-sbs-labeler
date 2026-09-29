@@ -14,7 +14,7 @@ import {
   Users,
   AudioWaveform,
 } from 'lucide-react'
-import { answerLabels, getConsensus, labelerStats } from '../analytics'
+import { answerLabel, getConsensus, labelerStats } from '../analytics'
 import type { AdminSection, Annotation, AppUser, LabelingTask } from '../types'
 import { Avatar } from './Avatar'
 
@@ -100,14 +100,14 @@ function Overview({ tasks, annotations, users, onSectionChange }: Pick<AdminDash
               const result = getConsensus(task, annotations)
               return (
                 <div className="activity-row" key={task.id}>
-                  <span className={`task-kind task-kind--${task.type}`}>{task.type === 'pairwise' ? 'A/B' : 'Да'}</span>
+                  <span className={`task-kind task-kind--${task.type}`}>{task.type === 'pairwise' ? 'A/B' : task.type === 'focus' ? 'Акцент' : 'Да'}</span>
                   <div className="activity-copy"><strong>{task.text}</strong><span>{task.question}</span></div>
                   <div className="coverage-mini">
                     <span>{result.count}/{result.required}</span>
                     <i><b style={{ width: `${Math.min(100, (result.count / result.required) * 100)}%` }} /></i>
                   </div>
                   <span className={`status-chip ${result.complete ? 'status-chip--done' : 'status-chip--work'}`}>
-                    {result.complete ? (result.isTie ? 'Спорно' : answerLabels[result.value!]) : 'В работе'}
+                    {result.complete ? (result.isTie ? 'Спорно' : answerLabel(result.value!)) : 'В работе'}
                   </span>
                 </div>
               )
@@ -156,7 +156,7 @@ function TasksView({ tasks, annotations, onCreateTask, onTaskOverlap }: Pick<Adm
               return (
                 <tr key={task.id}>
                   <td><div className="table-task-copy"><strong>{task.text}</strong><span>{task.question}</span></div></td>
-                  <td><span className={`task-kind task-kind--${task.type}`}>{task.type === 'pairwise' ? 'A/B' : 'Да/Нет'}</span></td>
+                  <td><span className={`task-kind task-kind--${task.type}`}>{task.type === 'pairwise' ? 'A/B' : task.type === 'focus' ? 'Акцент' : 'Да/Нет'}</span></td>
                   <td>
                     <div className="inline-overlap">
                       <span>{result.count}</span>
@@ -169,7 +169,7 @@ function TasksView({ tasks, annotations, onCreateTask, onTaskOverlap }: Pick<Adm
                   <td>
                     {result.count ? (
                       <div className="consensus-cell">
-                        <strong>{result.isTie ? 'Нет большинства' : answerLabels[result.value!]}</strong>
+                        <strong>{result.isTie ? 'Нет большинства' : answerLabel(result.value!)}</strong>
                         <span>{result.confidence}% голосов</span>
                       </div>
                     ) : <span className="muted-dash">—</span>}

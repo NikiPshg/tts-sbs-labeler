@@ -59,7 +59,7 @@ function AudioField({ label, value, fileName, onChange }: AudioFieldProps) {
 }
 
 export function CreateTaskModal({ defaultOverlap, activeAnnotators, onClose, onCreate }: CreateTaskModalProps) {
-  const [type, setType] = useState<LabelingTask['type']>('pairwise')
+  const [type, setType] = useState<'pairwise' | 'boolean'>('pairwise')
   const [text, setText] = useState('')
   const [question, setQuestion] = useState('Какой вариант звучит естественнее?')
   const [hint, setHint] = useState('Оценивайте интонацию, произношение и отсутствие артефактов.')
@@ -69,7 +69,7 @@ export function CreateTaskModal({ defaultOverlap, activeAnnotators, onClose, onC
   const [audioBName, setAudioBName] = useState<string>()
   const [overlap, setOverlap] = useState(defaultOverlap)
 
-  const changeType = (nextType: LabelingTask['type']) => {
+  const changeType = (nextType: 'pairwise' | 'boolean') => {
     setType(nextType)
     setQuestion(nextType === 'pairwise'
       ? 'Какой вариант звучит естественнее?'
