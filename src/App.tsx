@@ -49,6 +49,15 @@ import type {
 const WORKSPACE_KEY = 'sbs-lab:workspace-v3'
 const CURRENT_USER_KEY = 'sbs-lab:current-user'
 
+// Optional launch parameters: ?import=<bundle url>&user=<user id>&sync=<endpoint>.
+// The bundle is imported only when the stored project has a different name, so
+// reloading the same link keeps existing answers. With sync, every change to the
+// annotations is POSTed to the endpoint as a full snapshot.
+const launchParams = new URLSearchParams(window.location.search)
+const launchImport = launchParams.get('import')
+const launchUser = launchParams.get('user')
+const launchSync = launchParams.get('sync')
+
 interface StoredWorkspace {
   project: string
   defaultOverlap: number
@@ -249,6 +258,19 @@ function App() {
   useEffect(() => () => window.clearTimeout(advanceTimer.current), [])
 
   useEffect(() => {
+    if (!launchSync) return
+    const timer = window.setTimeout(() => {
+      fetch(launchSync, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ project, syncedAt: new Date().toISOString(), users, annotations }),
+        keepalive: true,
+      }).catch(() => setToast('Ответы не отправлены на сервер — они сохранены в браузере'))
+    }, 400)
+    return () => window.clearTimeout(timer)
+  }, [annotations, project, users])
+
+  useEffect(() => {
     if (!toast) return
     const timer = window.setTimeout(() => setToast(null), 2800)
     return () => window.clearTimeout(timer)
@@ -372,37 +394,59 @@ function App() {
     setToast(`Перекрытие ${defaultOverlap} применено к активным заданиям`)
   }
 
+  const applyBundle = useCallback((bundle: TaskBundle) => {
+    const nextUsers = bundle.users ?? users
+    const knownIds = new Set(nextUsers.map((user) => user.id))
+    const imported: LabelingTask[] = []
+    const bundleOverlap = Math.max(1, Math.min(7, bundle.defaultOverlap ?? defaultOverlap))
+    bundle.tasks.forEach((task) => {
+      const required = Math.max(1, Math.min(7, task.requiredAnnotations ?? bundleOverlap))
+      const presetIds = task.assigneeIds?.filter((id) => knownIds.has(id))
+      imported.push({
+        ...task,
+        requiredAnnotations: required,
+        assigneeIds: presetIds?.length ? presetIds : assignAnnotators(nextUsers, imported, [], required),
+        createdAt: task.createdAt ?? new Date().toISOString(),
+      })
+    })
+    if (bundle.users) setUsers(bundle.users)
+    setProject(bundle.project ?? 'Импортированный проект')
+    setDefaultOverlap(bundleOverlap)
+    setTasks(imported)
+    setAnnotations([])
+    setCurrentIndex(0)
+    setProjectMenuOpen(false)
+    setToast(`Загружено задач: ${imported.length}`)
+  }, [defaultOverlap, users])
+
   const importDataset = async (file: File) => {
     try {
-      const bundle = parseBundle(JSON.parse(await file.text()))
-      const nextUsers = bundle.users ?? users
-      const knownIds = new Set(nextUsers.map((user) => user.id))
-      const imported: LabelingTask[] = []
-      const bundleOverlap = Math.max(1, Math.min(7, bundle.defaultOverlap ?? defaultOverlap))
-      bundle.tasks.forEach((task) => {
-        const required = Math.max(1, Math.min(7, task.requiredAnnotations ?? bundleOverlap))
-        const presetIds = task.assigneeIds?.filter((id) => knownIds.has(id))
-        imported.push({
-          ...task,
-          requiredAnnotations: required,
-          assigneeIds: presetIds?.length ? presetIds : assignAnnotators(nextUsers, imported, [], required),
-          createdAt: task.createdAt ?? new Date().toISOString(),
-        })
-      })
-      if (bundle.users) setUsers(bundle.users)
-      setProject(bundle.project ?? 'Импортированный проект')
-      setDefaultOverlap(bundleOverlap)
-      setTasks(imported)
-      setAnnotations([])
-      setCurrentIndex(0)
-      setProjectMenuOpen(false)
-      setToast(`Загружено задач: ${imported.length}`)
+      applyBundle(parseBundle(JSON.parse(await file.text())))
     } catch (error) {
       setToast(error instanceof Error ? error.message : 'Не удалось прочитать JSON')
     } finally {
       if (fileInput.current) fileInput.current.value = ''
     }
   }
+
+  const launchDone = useRef(false)
+  useEffect(() => {
+    if (launchDone.current || (!launchImport && !launchUser)) return
+    launchDone.current = true
+    const selectUser = () => { if (launchUser) setCurrentUserId(launchUser) }
+    if (!launchImport) { selectUser(); return }
+    fetch(launchImport, { cache: 'no-store' })
+      .then((response) => {
+        if (!response.ok) throw new Error(`Не удалось загрузить задания (${response.status})`)
+        return response.json()
+      })
+      .then((value) => {
+        const bundle = parseBundle(value)
+        if (bundle.project !== project) applyBundle(bundle)
+        selectUser()
+      })
+      .catch((error) => setToast(error instanceof Error ? error.message : 'Не удалось загрузить задания'))
+  }, [applyBundle, project])
 
   const exportResults = () => {
     downloadJson('sbs-project-results.json', {
