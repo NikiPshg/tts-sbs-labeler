@@ -442,11 +442,22 @@ function App() {
       })
       .then((value) => {
         const bundle = parseBundle(value)
-        if (bundle.project !== project) applyBundle(bundle)
+        if (bundle.project !== project) {
+          if (launchSync && annotations.length) {
+            // Keep the replaced project's answers on the server before the import clears them.
+            void fetch(launchSync, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ project, syncedAt: new Date().toISOString(), users, annotations, replacedBy: bundle.project }),
+              keepalive: true,
+            }).catch(() => undefined)
+          }
+          applyBundle(bundle)
+        }
         selectUser()
       })
       .catch((error) => setToast(error instanceof Error ? error.message : 'Не удалось загрузить задания'))
-  }, [applyBundle, project])
+  }, [annotations, applyBundle, project, users])
 
   const exportResults = () => {
     downloadJson('sbs-project-results.json', {
