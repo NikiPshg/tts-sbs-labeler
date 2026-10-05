@@ -43,8 +43,8 @@ import type {
   TaskBundle,
 } from './types'
 
-const WORKSPACE_KEY = 'sbs-lab:workspace-v3'
-const CURRENT_USER_KEY = 'sbs-lab:current-user'
+const WORKSPACE_KEY = 'sbs-lab:uzb-e10-vs-prod-v3-50'
+const CURRENT_USER_KEY = 'sbs-lab:uzb-e10-vs-prod-v3-50:user'
 
 interface StoredWorkspace {
   project: string
@@ -192,7 +192,7 @@ function App() {
   const [tasks, setTasks] = useState(initial.tasks)
   const [users, setUsers] = useState(initial.users)
   const [annotations, setAnnotations] = useState(initial.annotations)
-  const [currentUserId, setCurrentUserId] = useState(() => localStorage.getItem(CURRENT_USER_KEY) ?? 'admin')
+  const [currentUserId, setCurrentUserId] = useState(() => new URLSearchParams(window.location.search).get('user') ?? localStorage.getItem(CURRENT_USER_KEY) ?? 'admin')
   const [adminSection, setAdminSection] = useState<AdminSection>('overview')
   const [labelingMode, setLabelingMode] = useState(false)
   const [currentIndex, setCurrentIndex] = useState(0)

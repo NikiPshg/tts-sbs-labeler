@@ -28,7 +28,7 @@ export function PairwiseTaskView({ task, answer, onAnswer }: PairwiseTaskViewPro
           </div>
           <AudioPlayer audio={task.audioA} tone="violet" />
           <button className="choice-button" onClick={() => onAnswer('a')}>
-            {answer === 'a' ? 'Выбрано' : 'Выбрать A'}
+            {answer === 'a' ? 'Выбрано: A лучше' : 'A лучше'}
             <kbd>1</kbd>
           </button>
         </section>
@@ -43,7 +43,7 @@ export function PairwiseTaskView({ task, answer, onAnswer }: PairwiseTaskViewPro
           </div>
           <AudioPlayer audio={task.audioB} tone="coral" />
           <button className="choice-button" onClick={() => onAnswer('b')}>
-            {answer === 'b' ? 'Выбрано' : 'Выбрать B'}
+            {answer === 'b' ? 'Выбрано: B лучше' : 'B лучше'}
             <kbd>2</kbd>
           </button>
         </section>
@@ -54,7 +54,7 @@ export function PairwiseTaskView({ task, answer, onAnswer }: PairwiseTaskViewPro
         onClick={() => onAnswer('tie')}
       >
         <Equal size={18} />
-        {answer === 'tie' ? 'Отмечено: варианты равноценны' : 'Варианты равноценны'}
+        {answer === 'tie' ? 'Отмечено: не знаю / не слышу разницы' : 'Не знаю / не слышу разницы'}
         <kbd>0</kbd>
       </button>
     </div>

@@ -113,7 +113,7 @@ export function rebalanceTask(
 export const answerLabels: Record<AnswerValue, string> = {
   a: 'Вариант A',
   b: 'Вариант B',
-  tie: 'Равноценны',
+  tie: 'Не знаю / нет разницы',
   yes: 'Да',
   no: 'Нет',
   unsure: 'Не уверен',
